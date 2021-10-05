@@ -13,7 +13,6 @@
 
 const int NUM_MAX_QUEUED_CONNECTIONS = 100;
 const int NUM_THREADS = 8;
-const int BUFFER_SIZE = 16384;
 int TELEMETRY_ENABLED = 0; // set in main()
 
 char BAD_REQUEST[] = {
@@ -30,21 +29,79 @@ char SSL_GREETING_HEADER[] = {
     '\r', '\n', '\r', '\n'
 };
 
+const int BUFFER_SIZE = 16384;
+char buffers[8 + 1][16384]; // + 1, main thread just does multiplexing
+
 char* BLACKLIST = NULL;
+
+struct StreamInfo {
+    clock_t start_time;
+    long byte_count;
+    char* domain;
+};
+struct StreamInfo* stream_infos[FD_SETSIZE];
+
+int socket_descriptors[FD_SETSIZE]; // contains the other socket, 0 (stdin dummy) otherwise
+int is_socket_processing[FD_SETSIZE]; // 0 - nothing, 1 - a thread is processing it
+
 
 #define DEBUG_MESSAGES 1
 
 
-void cleanup(int client_sock_fd)
+
+void print_telemetry(struct StreamInfo* info)
 {
-    write(client_sock_fd, BAD_REQUEST, sizeof(BAD_REQUEST));
-    close(client_sock_fd);
+    if (TELEMETRY_ENABLED)
+    {
+        float time = ((float)(clock() - info->start_time)) / CLOCKS_PER_SEC;
+        printf("Hostname: %s, Size: %ld bytes, Time: %0.3f sec\n", info->domain, info->byte_count, time);
+    }
 }
 
-int parse_http_header(
-    char* recv_buf, int num_bytes_read,                    // inputs
-    char** url_start_outer, int* domain_len, int* port_num // inputs / outputs
-)
+
+// @param client_sock_fd should be a valid fd
+void cleanup_client(int client_sock_fd)
+{
+    close(client_sock_fd);
+
+    if (stream_infos[client_sock_fd] != NULL)
+    {
+        free(stream_infos[client_sock_fd]->domain);
+        free(stream_infos[client_sock_fd]);
+        stream_infos[client_sock_fd] = NULL;
+    }
+
+    int dest_sock = socket_descriptors[client_sock_fd];
+    if (dest_sock != 0 /* uninitialised */)
+    {
+        close(dest_sock);
+        socket_descriptors[dest_sock] = 0;
+        is_socket_processing[dest_sock] = 0;
+    }
+
+    socket_descriptors[client_sock_fd] = 0;
+    is_socket_processing[client_sock_fd] = 0;
+}
+
+
+void cleanup_client_error(int client_sock_fd)
+{
+    write(client_sock_fd, BAD_REQUEST, sizeof(BAD_REQUEST));
+    cleanup_client(client_sock_fd);
+}
+
+
+void cleanup_client_completed(int client_sock_fd)
+{
+#ifdef DEBUG_MESSAGES
+    printf("Fds %d %d connection completed successfully, closing\n", client_sock_fd, socket_descriptors[client_sock_fd]);
+#endif
+    print_telemetry(stream_infos[client_sock_fd]);
+    cleanup_client(client_sock_fd);
+}
+
+
+int parse_http_header(char* recv_buf, int num_bytes_read, int* port_num, char** domain)
 {
 #ifdef DEBUG_MESSAGES
     printf("Thread %d read %d bytes\n", omp_get_thread_num(), num_bytes_read);
@@ -63,100 +120,213 @@ int parse_http_header(
 
     *port_num = 443;
 
+    int domain_len;
+
     for (int i = 0; i < num_bytes_read; i++)
     {
         if (url_start[i] == ' ' || url_start[i] == '/')
         {
-            *domain_len = i + 1;
+            domain_len = i + 1;
             break;
         }
         else if (url_start[i] == ':')
         {
-            *domain_len = i;
+            domain_len = i;
             *port_num = atoi(url_start + i + 1);
             break;
         }
     }
 
-    *url_start_outer = url_start;
+    *domain = malloc(domain_len * sizeof(char));
+    strncpy(*domain, url_start, domain_len);
 
     return 0;
 }
 
-void handle_errno(int thread_num)
+
+void handle_errno()
 {
-    switch(errno) {
-        case ECONNREFUSED:
-            printf("ECONNREFUSED %d\n", thread_num);
-            break;
-        case EHOSTUNREACH:
-            printf("EHOSTUNREACH %d\n", thread_num);
-            break;
-        case ENETUNREACH:
-            printf("ENETUNREACH %d\n", thread_num);
-            break;
-        case EHOSTDOWN:
-            printf("EHOSTDOWN %d\n", thread_num);
-            break;
-        case ENETDOWN:
-            printf("ENETDOWN %d\n", thread_num);
-            break;
-        case ETIMEDOUT:
-            printf("ETIMEDOUT %d\n", thread_num);
-            break;
-        default:
-            printf("Thread %d failed to write, unknown error\n", thread_num);
+    int thread_num = omp_get_thread_num();
+    printf("Thread %d error code %d\n", thread_num, errno);
+}
+
+
+// Forward and persist data between this pair of client / destination **for a while**
+// Why not completely multiplex? -- context switch is expensive
+// @param fd_one one of the client OR socket fds which received a fd event from select() multiplex
+void forward_socket_pair(int fd_one)
+{
+    int thread_num = omp_get_thread_num();
+
+    int fd_two = socket_descriptors[fd_one];
+
+#ifdef DEBUG_MESSAGES
+    // assert
+    if (stream_infos[fd_one] == NULL && stream_infos[fd_two] == NULL)
+    {
+        printf("No stream infos\n");
+        exit(1);
     }
+#endif
+
+    int client_fd = stream_infos[fd_one] == NULL ? fd_two : fd_one;
+    struct StreamInfo* info = stream_infos[client_fd];
+
+    fd_set both_sockets;
+    struct timespec timeout;
+    timeout.tv_sec = 1;
+    timeout.tv_nsec = 0;
+
+    printf("Processing %d %d flow\n", fd_one, fd_two);
+
+    while (1)
+    {
+        FD_ZERO(&both_sockets);
+        FD_SET(fd_one, &both_sockets);
+        FD_SET(fd_two, &both_sockets);
+
+        int select_result = pselect(FD_SETSIZE, &both_sockets, NULL, NULL, &timeout, NULL);
+
+        if (select_result == -1)
+        {
+            printf("Thread %d Fds %d %d failed to multiplex\n", thread_num, fd_one, fd_two);
+            break;
+        }
+        else if (select_result == 0)
+        {
+#ifdef DEBUG_MESSAGES
+            printf("%d socket timed out\n", fd_one);
+#endif
+            break;
+        }
+
+
+#ifdef DEBUG_MESSAGES
+        printf("Thread %d Fds %d %d received %d multiplex event(s)\n", thread_num, fd_one, fd_two, select_result);
+#endif
+
+        // fd_one -> fd_two
+        if (FD_ISSET(fd_one, &both_sockets))
+        {
+#ifdef DEBUG_MESSAGES
+            printf("Fds %d %d received client fd event\n", fd_one, fd_two);
+#endif
+
+            int bytes_read = read(fd_one, buffers[thread_num], BUFFER_SIZE);
+            if (bytes_read == -1)
+            {
+                printf("Thread %d Fds %d %d could not read data from client, closing\n", thread_num, fd_one, fd_two);
+                break;
+            }
+            else if (bytes_read == 0)
+            {
+                cleanup_client_completed(client_fd);
+                break;
+            }
+
+            info->byte_count += bytes_read;
+
+#ifdef DEBUG_MESSAGES
+            printf("Thread %d Fds %d %d read client fd event\n", thread_num, fd_one, fd_two);
+#endif
+
+            int write_result = write(fd_two, buffers[thread_num], bytes_read);
+            if (write_result == -1)
+            {
+                printf("Thread %d Fds %d %d failed to forward data to dest\n", thread_num, fd_one, fd_two);
+                break;
+            }
+
+
+#ifdef DEBUG_MESSAGES
+            printf("Thread %d Fds %d %d completed client fd event %d %d bytes\n", thread_num, fd_one, fd_two, bytes_read, write_result);
+#endif
+        }
+
+
+        // fd_two -> fd_one
+        if (FD_ISSET(fd_two, &both_sockets))
+        {
+#ifdef DEBUG_MESSAGES
+            printf("Thread %d Fds %d %d received dest fd event\n", thread_num, fd_one, fd_two);
+#endif
+
+
+            int bytes_read = read(fd_two, buffers[thread_num], BUFFER_SIZE);
+            if (bytes_read == -1)
+            {
+                printf("Thread %d Fds %d %d could not read data from dest, closing\n", thread_num, fd_one, fd_two);
+                break;
+            }
+            else if (bytes_read == 0)
+            {
+                cleanup_client_completed(client_fd);
+                break;
+            }
+
+            info->byte_count += bytes_read;
+
+#ifdef DEBUG_MESSAGES
+            printf("Thread %d Fds %d %d read dest fd event\n", thread_num, fd_one, fd_two);
+#endif
+
+            int write_result = write(fd_one, buffers[thread_num], bytes_read);
+            if (write_result == -1)
+            {
+                printf("Thread %d Fds %d %d failed to forward data to client\n", thread_num, fd_one, fd_two);
+                break;
+            }
+        }
+    }
+
+    is_socket_processing[fd_one] = 0;
+    is_socket_processing[fd_two] = 0;
+
+#ifdef DEBUG_MESSAGES
+    printf("Thread %d Fds %d %d session completed %s\n", thread_num, fd_one, fd_two, info->domain);
+#endif
 }
 
-void print_telemetry(char* hostname, long size, float time)
-{
-    printf("Hostname: %s, Size: %ld bytes, Time: %0.3f sec\n", hostname, size, time);
-}
 
-void handle_client(int client_sock_fd)
+void handle_new_client(int client_sock_fd)
 {
-    clock_t start = clock();
-    long total_bytes = 0;
+    struct StreamInfo* info = malloc(sizeof(struct StreamInfo));
+    stream_infos[client_sock_fd] = info;
+
+    info->start_time = clock();
+    info->byte_count = 0;
 
     int thread_num = omp_get_thread_num();
 
 #ifdef DEBUG_MESSAGES
-    printf("Thread %d handling new request\n", thread_num);
+    printf("Thread %d Fds %d handling new request\n", thread_num, client_sock_fd);
 #endif
 
-    char recv_buf[BUFFER_SIZE];
-    int num_bytes_read = read(client_sock_fd, &recv_buf, sizeof(recv_buf));
+    int num_bytes_read = read(client_sock_fd, buffers[thread_num], BUFFER_SIZE);
     if (num_bytes_read == -1)
     {
-        printf("Thread %d failed to read new request\n", thread_num);
-        cleanup(client_sock_fd);
+        printf("Thread %d Fds %d failed to read new request\n", thread_num, client_sock_fd);
+        cleanup_client_error(client_sock_fd);
         return;
     }
     else if (num_bytes_read == 0)
     {
-        cleanup(client_sock_fd);
+        cleanup_client_error(client_sock_fd);
         return;
     }
 
-    total_bytes += num_bytes_read;
+    info->byte_count += num_bytes_read;
 
     // ----------------------------------------------------
     // Parse the HTTP header
 
-    int domain_len, port_num;
-    char* url_start;
-    if (parse_http_header(recv_buf, num_bytes_read, &url_start, &domain_len, &port_num) == -1)
+    int port_num;
+    if (parse_http_header(buffers[thread_num], num_bytes_read, &port_num, &info->domain) == -1)
     {
-        printf("Error parsing http header %d\n", thread_num);
-        cleanup(client_sock_fd);
+        printf("Thread %d Fds %d Error parsing http header\n", thread_num, client_sock_fd);
+        cleanup_client_error(client_sock_fd);
         return;
     }
-
-    char domain[domain_len + 1];
-    strncpy(domain, url_start, domain_len);
-    domain[domain_len] = '\0';
-
 
     // ----------------------------------------------------
     // "DNS query"
@@ -166,208 +336,90 @@ void handle_client(int client_sock_fd)
     bzero(&hints, sizeof(hints)); // erase everything
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
 
 #ifdef DEBUG_MESSAGES
-    printf("Thread %d attempting domain %s port %d\n", thread_num, domain, port_num);
+    printf("Thread %d Fds %d attempting domain %s port %d\n", thread_num, client_sock_fd, info->domain, port_num);
 #endif
 
     struct addrinfo *dest_sock_result;
-    int addr_info_result = getaddrinfo(domain, NULL, &hints, &dest_sock_result);
+    int addr_info_result = getaddrinfo(info->domain, NULL, &hints, &dest_sock_result);
     if (addr_info_result == -1)
     {
-        printf("Thread %d failed to resolve %s\n", thread_num, domain);
-        cleanup(client_sock_fd);
+        printf("Thread %d Fds %d failed to resolve %s\n", thread_num, client_sock_fd, info->domain);
+        cleanup_client_error(client_sock_fd);
+        return;
+    }
+    else if (dest_sock_result == NULL)
+    {
+        // no addrinfo fits the hints
+        printf("Thread %d Fds %d failed to resolve (2) %s\n", thread_num, client_sock_fd, info->domain);
+        cleanup_client_error(client_sock_fd);
         return;
     }
 
 #ifdef DEBUG_MESSAGES
-    char ip[INET_ADDRSTRLEN];
+    char ip[(dest_sock_result->ai_family & AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN];
     inet_ntop(
         dest_sock_result->ai_family,
         &dest_sock_result->ai_addr->sa_data[2],
-        ip, INET_ADDRSTRLEN
+        ip, (dest_sock_result->ai_family & AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN
     );
-    printf("Thread %d attempting ip %s\n", thread_num, ip);
+    printf("Thread %d Fds %d attempting ip %s\n", thread_num, client_sock_fd, ip);
 #endif
 
-    // ----------------------------------------------------
-    // Destination
-
+    // Add on the port
     ((struct sockaddr_in*)dest_sock_result->ai_addr)->sin_port = htons((unsigned short)port_num);
 
-    /* struct sockaddr_in dest_sock_addr;
-    bzero(&dest_sock_addr, sizeof(dest_sock_addr));
-    dest_sock_addr.sin_family = AF_INET;
-    inet_pton(AF_INET, ip, &dest_sock_addr.sin_addr.s_addr);   // pton converts text to binary, sets it in dst
-    dest_sock_addr.sin_port = htons((unsigned short)port_num);
- */
     // ----------------------------------------------------
-    // "Client socket" (proxy - webserver)
+    // Create "Destination socket" (proxy - webserver)
+
     int dest_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (dest_sock_fd == -1)
+    if (socket_descriptors[client_sock_fd] == -1)
     {
-        printf("Thread %d failed to open client socket\n", thread_num);
-        cleanup(client_sock_fd);
+        printf("Thread %d Fds %d failed to open dest socket\n", thread_num, client_sock_fd);
+        cleanup_client_error(client_sock_fd);
         return;
     }
+
+    // These 4 writes must be in this order: is_socket_processing then socket_descriptors
+    is_socket_processing[client_sock_fd] = 1;
+    is_socket_processing[dest_sock_fd] = 1;
+    asm volatile("" ::: "memory"); // sequential consistency without atomics / cs
+    socket_descriptors[client_sock_fd] = dest_sock_fd;
+    socket_descriptors[dest_sock_fd] = client_sock_fd;
 
     int connect_result = connect(dest_sock_fd, dest_sock_result->ai_addr, sizeof(*dest_sock_result->ai_addr));
     if (connect_result != 0)
     {
-        printf("Thread %d failed to open tcp connection to destination\n", thread_num);
-        cleanup(client_sock_fd);
-        close(dest_sock_fd);
+        printf("Thread %d Fds %d %d failed to open tcp connection to destination\n", thread_num, client_sock_fd, dest_sock_fd);
+        cleanup_client_error(client_sock_fd);
         return;
     }
 
-    freeaddrinfo(dest_sock_result);
+    // freeaddrinfo(dest_sock_result);
 
     // ----------------------------------------------------
     // SSL greeting to client
 
 #ifdef DEBUG_MESSAGES
-    printf("Thread %d connected ip %s\n", thread_num, ip);
+    printf("Thread %d Fds %d %d connected ip %s\n", thread_num, client_sock_fd, dest_sock_fd, ip);
 #endif
 
     if (write(client_sock_fd, SSL_GREETING_HEADER, sizeof(SSL_GREETING_HEADER)) == -1)
     {
-        cleanup(client_sock_fd);
+        printf("Thread %d Fds %d %d failed to send SSL greeting to client\n", thread_num, client_sock_fd, dest_sock_fd);
+        cleanup_client_error(client_sock_fd);
         return;
     }
 
 #ifdef DEBUG_MESSAGES
-    printf("Thread %d sent SSL greeting to client\n", thread_num);
+    printf("Thread %d Fds %d %d sent SSL greeting to client\n", thread_num, client_sock_fd, dest_sock_fd);
 #endif
 
     // ----------------------------------------------------
-    
-    /* int first_write_result = write(dest_sock_fd, recv_buf, num_bytes_read);
-    if (first_write_result == -1)
-    {
-        printf("Thread %d failed to write\n", thread_num);
-        cleanup(client_sock_fd);
-        close(dest_sock_fd);
-        return;
-    } */
 
-#ifdef DEBUG_MESSAGES
-    printf("Thread %d sent first message to dest %s\n", thread_num, ip);
-#endif
-
-    // ----------------------------------------------------
-    // Main proxy loop
-    // Forward stuff back and forth client & server
-
-    // Multiplexing here as tcp is duplex.
-    fd_set both_sockets;
-    struct timeval timeout;
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
-
-    while (1)
-    {
-        FD_ZERO(&both_sockets);
-        FD_SET(client_sock_fd, &both_sockets);
-        FD_SET(dest_sock_fd, &both_sockets);
-
-        int select_result = select(FD_SETSIZE, &both_sockets, NULL, NULL, &timeout);
-        if (select_result == -1)
-        {
-            printf("Thread %d failed to multiplex\n", thread_num);
-            break;
-        }
-        else if (select_result == 0)
-        {
-            printf("Thread %d timed out\n", thread_num);
-            break;
-        }
-
-
-#ifdef DEBUG_MESSAGES
-        printf("Thread %d received %d multiplex event(s)\n", thread_num, select_result);
-#endif
-
-        if (FD_ISSET(client_sock_fd, &both_sockets))
-        {
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d received client fd event\n", thread_num);
-#endif
-
-            int read_result = read(client_sock_fd, recv_buf, sizeof(recv_buf));
-            if (read_result == -1)
-            {
-                printf("Thread %d could not read data from client, closing\n", thread_num);
-                break;
-            }
-            else if (read_result == 0)
-            {
-                printf("Thread %d connection closing\n", thread_num);
-                break;
-            }
-
-            total_bytes += read_result;
-
-            //printf("port %d\n", (int)recv_buf[0]);
-
-            int write_result = write(dest_sock_fd, recv_buf, read_result);
-            if (write_result == -1)
-            {
-                printf("Thread %d failed to forward data to dest\n", thread_num);
-                break;
-            }
-
-
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d completed client fd event %d %d bytes\n", thread_num, read_result, write_result);
-#endif
-        }
-
-        if (FD_ISSET(dest_sock_fd, &both_sockets))
-        {
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d received dest fd event\n", thread_num);
-#endif
-
-
-            int read_result = read(dest_sock_fd, recv_buf, sizeof(recv_buf));
-            if (read_result == -1)
-            {
-                printf("Thread %d could not read data from dest, closing\n", thread_num);
-                break;
-            }
-            else if (read_result == 0)
-            {
-                printf("Thread %d connection closing\n", thread_num);
-                break;
-            }
-
-            total_bytes += read_result;
-
-            int write_result = write(client_sock_fd, recv_buf, read_result);
-            if (write_result == -1)
-            {
-                printf("Thread %d failed to forward data to client\n", thread_num);
-                break;
-            }
-
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d completed dest fd event %d %d bytes\n", thread_num, read_result, write_result);
-#endif
-        }
-    }
-
-#ifdef DEBUG_MESSAGES
-    printf("Thread %d completed domain %s port %d\n", thread_num, domain, port_num);
-#endif
-
-    if (TELEMETRY_ENABLED)
-    {
-        float time = ((float)(clock() - start)) / CLOCKS_PER_SEC;
-        print_telemetry(domain, total_bytes, time);
-    }
-
-    close(client_sock_fd);
-    close(dest_sock_fd);
+    forward_socket_pair(client_sock_fd);
 }
 
 
@@ -408,10 +460,18 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+
     // OpenMP has a thread pool, this sets the number of threads there.
     omp_set_num_threads(NUM_THREADS);
 
-    int len;
+
+    for (int i = 0; i < FD_SETSIZE; i++)
+    {
+        socket_descriptors[i] = 0;
+        is_socket_processing[i] = 0;
+        stream_infos[i] = NULL;
+    }
+    fd_set all_sockets;
 
     // This directive defines a **parallel region** in which other OpenMP directives may be placed
     // May be ignored.
@@ -421,26 +481,80 @@ int main(int argc, char *argv[])
         #pragma omp master
         while (1)
         {
-#ifdef DEBUG_MESSAGES
-            printf("Main thread accepting new request\n");
-#endif
-            struct sockaddr_in client_sock_addr;
-            int client_sock_fd = accept(listen_socket_fd, (struct sockaddr*)&client_sock_addr, &len);
-            if (client_sock_fd == -1)
+            // -------------------------------------
+            // Refresh fd set
+            FD_ZERO(&all_sockets);
+            FD_SET(listen_socket_fd, &all_sockets);
+            for (int i = 0; i < FD_SETSIZE; i++)
             {
-                printf("Main thread error-ed in @accept call\n");
-                exit(1);
+                if (socket_descriptors[i] && is_socket_processing[i] == 0)
+                {
+                    FD_SET(i, &all_sockets);
+                }
             }
+            // -------------------------------------
+
+
+            // -------------------------------------
+            int select_result = select(FD_SETSIZE, &all_sockets, NULL, NULL, NULL);
+            if (select_result == -1 || select_result == 0)
+            {
+                printf("main loop failed to multiplex\n");
+                break;
+            }
+            // -------------------------------------
+
+
+            // -------------------------------------
+            // New connection
+            if (FD_ISSET(listen_socket_fd, &all_sockets))
+            {
 
 #ifdef DEBUG_MESSAGES
-            char client_ip[20];
-            inet_ntop(client_sock_addr.sin_family, &client_sock_addr.sin_addr.s_addr, client_ip, 20);
-            printf("Main thread accepted new request from %s\n", client_ip);
+                printf("Main thread accepting new request\n");
 #endif
 
-            // This function / task goes to the OpenMP threadpool
-            #pragma omp task
-            handle_client(client_sock_fd);
+                struct sockaddr_in client_sock_addr;
+                int len = sizeof(client_sock_addr);
+                bzero(&client_sock_addr, len);
+                int client_sock_fd = accept(listen_socket_fd, (struct sockaddr*)&client_sock_addr, &len);
+                if (client_sock_fd == -1)
+                {
+                    printf("Main thread error-ed in @accept call\n");
+                    handle_errno();
+                    break;
+                }
+
+#ifdef DEBUG_MESSAGES
+                char client_ip[20];
+                inet_ntop(client_sock_addr.sin_family, &client_sock_addr.sin_addr.s_addr, client_ip, 20);
+                printf("Main thread accepted new request from %s\n", client_ip);
+#endif
+
+                // This function / task goes to the OpenMP threadpool
+                #pragma omp task
+                handle_new_client(client_sock_fd);
+            }
+            // -------------------------------------
+
+
+            // -------------------------------------
+            // Existing connections, new data
+            for (int i = 0; i < FD_SETSIZE; i++)
+            {
+                if (socket_descriptors[i] && is_socket_processing[i] == 0 && FD_ISSET(i, &all_sockets))
+                {
+                    FD_CLR(socket_descriptors[i], &all_sockets);
+
+                    is_socket_processing[i] = 1;
+                    is_socket_processing[socket_descriptors[i]] = 1;
+
+                    // Same here
+                    #pragma omp task
+                    forward_socket_pair(i);
+                }
+            }
+            // -------------------------------------
         }
     }
 }
