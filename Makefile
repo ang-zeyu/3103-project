@@ -5,7 +5,7 @@ build:
 	gcc -fopenmp *.c -o main
 
 build-debug:
-	gcc -g -fopenmp *.c -o main
+	gcc -O2 -g -fopenmp *.c -o main
 	gdb main
 
 build-opt:

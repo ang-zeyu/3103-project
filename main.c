@@ -84,8 +84,16 @@ void cleanup_client(int client_sock_fd)
 }
 
 
+void handle_errno()
+{
+    int thread_num = omp_get_thread_num();
+    printf("Thread %d error code %d\n", thread_num, errno);
+}
+
+
 void cleanup_client_error(int client_sock_fd)
 {
+    handle_errno();
     write(client_sock_fd, BAD_REQUEST, sizeof(BAD_REQUEST));
     cleanup_client(client_sock_fd);
 }
@@ -126,7 +134,7 @@ int parse_http_header(char* recv_buf, int num_bytes_read, int* port_num, char** 
     {
         if (url_start[i] == ' ' || url_start[i] == '/')
         {
-            domain_len = i + 1;
+            domain_len = i;
             break;
         }
         else if (url_start[i] == ':')
@@ -137,17 +145,11 @@ int parse_http_header(char* recv_buf, int num_bytes_read, int* port_num, char** 
         }
     }
 
-    *domain = malloc(domain_len * sizeof(char));
-    strncpy(*domain, url_start, domain_len);
+    *domain = malloc((domain_len + 1) * sizeof(char));
+    memcpy(*domain, url_start, domain_len);
+    (*domain)[domain_len] = '\0';
 
     return 0;
-}
-
-
-void handle_errno()
-{
-    int thread_num = omp_get_thread_num();
-    printf("Thread %d error code %d\n", thread_num, errno);
 }
 
 
@@ -177,7 +179,9 @@ void forward_socket_pair(int fd_one)
     timeout.tv_sec = 1;
     timeout.tv_nsec = 0;
 
+#ifdef DEBUG_MESSAGES
     printf("Processing %d %d flow\n", fd_one, fd_two);
+#endif
 
     while (1)
     {
@@ -334,7 +338,7 @@ void handle_new_client(int client_sock_fd)
     // https://man7.org/linux/man-pages/man3/getaddrinfo.3.html
     struct addrinfo hints;
     bzero(&hints, sizeof(hints)); // erase everything
-    hints.ai_family = AF_INET;
+    hints.ai_family = AF_INET; // TO ASK: do we need IPV6? (AF_UNSPEC if so)
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_protocol = IPPROTO_TCP;
 
@@ -342,7 +346,7 @@ void handle_new_client(int client_sock_fd)
     printf("Thread %d Fds %d attempting domain %s port %d\n", thread_num, client_sock_fd, info->domain, port_num);
 #endif
 
-    struct addrinfo *dest_sock_result;
+    struct addrinfo *dest_sock_result = NULL;
     int addr_info_result = getaddrinfo(info->domain, NULL, &hints, &dest_sock_result);
     if (addr_info_result == -1)
     {
@@ -353,29 +357,37 @@ void handle_new_client(int client_sock_fd)
     else if (dest_sock_result == NULL)
     {
         // no addrinfo fits the hints
-        printf("Thread %d Fds %d failed to resolve (2) %s\n", thread_num, client_sock_fd, info->domain);
+        printf("Thread %d Fds %d failed to resolve hints (might be expected, try dns-ing it) %s\n", thread_num, client_sock_fd, info->domain);
         cleanup_client_error(client_sock_fd);
         return;
     }
 
 #ifdef DEBUG_MESSAGES
-    char ip[(dest_sock_result->ai_family & AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN];
+    printf("Thread %d Fds %d attempting ai_family %d\n", thread_num, client_sock_fd, dest_sock_result->ai_family);
+    char ip[(dest_sock_result->ai_family == AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN];
     inet_ntop(
         dest_sock_result->ai_family,
-        &dest_sock_result->ai_addr->sa_data[2],
-        ip, (dest_sock_result->ai_family & AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN
+        (dest_sock_result->ai_family == AF_INET) ? &dest_sock_result->ai_addr->sa_data[2] : &(((struct sockaddr_in6*)dest_sock_result->ai_addr)->sin6_addr),
+        ip, (dest_sock_result->ai_family == AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN
     );
     printf("Thread %d Fds %d attempting ip %s\n", thread_num, client_sock_fd, ip);
 #endif
 
     // Add on the port
-    ((struct sockaddr_in*)dest_sock_result->ai_addr)->sin_port = htons((unsigned short)port_num);
+    if ((dest_sock_result -> ai_family) == AF_INET) // ipv4
+    {
+        ((struct sockaddr_in*)dest_sock_result->ai_addr)->sin_port = htons((unsigned short)port_num);
+    }
+    else // ipv6
+    {
+        ((struct sockaddr_in6*)dest_sock_result->ai_addr)->sin6_port = htons((unsigned short)port_num);
+    }
 
     // ----------------------------------------------------
     // Create "Destination socket" (proxy - webserver)
 
-    int dest_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
-    if (socket_descriptors[client_sock_fd] == -1)
+    int dest_sock_fd = socket(dest_sock_result->ai_family, SOCK_STREAM, 0);
+    if (dest_sock_fd == -1)
     {
         printf("Thread %d Fds %d failed to open dest socket\n", thread_num, client_sock_fd);
         cleanup_client_error(client_sock_fd);
@@ -389,7 +401,7 @@ void handle_new_client(int client_sock_fd)
     socket_descriptors[client_sock_fd] = dest_sock_fd;
     socket_descriptors[dest_sock_fd] = client_sock_fd;
 
-    int connect_result = connect(dest_sock_fd, dest_sock_result->ai_addr, sizeof(*dest_sock_result->ai_addr));
+    int connect_result = connect(dest_sock_fd, dest_sock_result->ai_addr, dest_sock_result->ai_addrlen);
     if (connect_result != 0)
     {
         printf("Thread %d Fds %d %d failed to open tcp connection to destination\n", thread_num, client_sock_fd, dest_sock_fd);
