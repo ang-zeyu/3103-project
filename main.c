@@ -561,8 +561,10 @@ int main(int argc, char *argv[])
                     {
                         int client_fd = stream_infos[i] == NULL ? socket_descriptors[i] : i;
                         int thread_num = omp_get_thread_num();
-                        forward(i, socket_descriptors[i], client_fd, thread_num);
-                        forward_socket_pair(i, socket_descriptors[i], client_fd, thread_num);
+                        if (forward(i, socket_descriptors[i], client_fd, thread_num) == 0)
+                        {
+                            forward_socket_pair(i, socket_descriptors[i], client_fd, thread_num);
+                        }
                     }
                 }
             }
