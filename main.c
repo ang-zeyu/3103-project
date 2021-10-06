@@ -66,7 +66,7 @@ int parse_http_header(
     {
         if (url_start[i] == ' ' || url_start[i] == '/')
         {
-            *domain_len = i + 1;
+            *domain_len = i;
             break;
         }
         else if (url_start[i] == ':')
@@ -165,16 +165,23 @@ void handle_client(int client_sock_fd)
     bzero(&hints, sizeof(hints)); // erase everything
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
 
 #ifdef DEBUG_MESSAGES
     printf("Thread %d attempting domain %s port %d\n", thread_num, domain, port_num);
 #endif
 
-    struct addrinfo *dest_sock_result;
+    struct addrinfo *dest_sock_result = NULL;
     int addr_info_result = getaddrinfo(domain, NULL, &hints, &dest_sock_result);
     if (addr_info_result == -1)
     {
         printf("Thread %d failed to resolve %s\n", thread_num, domain);
+        cleanup(client_sock_fd);
+        return;
+    }
+    else if (dest_sock_result == NULL)
+    {
+        printf("Thread %d failed to resolve hints %s\n", thread_num, domain);
         cleanup(client_sock_fd);
         return;
     }
@@ -202,7 +209,7 @@ void handle_client(int client_sock_fd)
  */
     // ----------------------------------------------------
     // "Client socket" (proxy - webserver)
-    int dest_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+    int dest_sock_fd = socket(dest_sock_result->ai_family, SOCK_STREAM, 0);
     if (dest_sock_fd == -1)
     {
         printf("Thread %d failed to open client socket\n", thread_num);
@@ -210,7 +217,7 @@ void handle_client(int client_sock_fd)
         return;
     }
 
-    int connect_result = connect(dest_sock_fd, dest_sock_result->ai_addr, sizeof(*dest_sock_result->ai_addr));
+    int connect_result = connect(dest_sock_fd, dest_sock_result->ai_addr, dest_sock_result->ai_addrlen);
     if (connect_result != 0)
     {
         printf("Thread %d failed to open tcp connection to destination\n", thread_num);
@@ -260,7 +267,7 @@ void handle_client(int client_sock_fd)
     // Multiplexing here as tcp is duplex.
     fd_set both_sockets;
     struct timespec timeout;
-    timeout.tv_sec = 2;
+    timeout.tv_sec = 1;
     timeout.tv_nsec = 0;
 
     while (1)
