@@ -81,7 +81,10 @@ void cleanup_client(int client_sock_fd)
 
     if (stream_infos[client_sock_fd] != NULL)
     {
-        free(stream_infos[client_sock_fd]->domain);
+        if (stream_infos[client_sock_fd]->domain != NULL)
+        {
+            free(stream_infos[client_sock_fd]->domain);
+        }
         free(stream_infos[client_sock_fd]);
         stream_infos[client_sock_fd] = NULL;
     }
@@ -284,8 +287,8 @@ void handle_new_client(int client_sock_fd)
 {
     struct StreamInfo* info = malloc(sizeof(struct StreamInfo));
     stream_infos[client_sock_fd] = info;
-
     info->start_time = clock();
+    info->domain = NULL;
     info->byte_count = 0;
 
     int thread_num = omp_get_thread_num();
@@ -303,6 +306,7 @@ void handle_new_client(int client_sock_fd)
     }
     else if (num_bytes_read == 0)
     {
+        printf("Thread %d Fds %d Error no bytes after accepting\n", thread_num, client_sock_fd);
         cleanup_client_error(client_sock_fd);
         return;
     }
