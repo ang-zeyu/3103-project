@@ -32,7 +32,6 @@ char SSL_GREETING_HEADER[] = {
 
 char* BLACKLIST = NULL;
 
-#define DEBUG_MESSAGES 1
 
 
 void cleanup(int client_sock_fd)
@@ -220,7 +219,7 @@ void handle_client(int client_sock_fd)
         return;
     }
 
-    freeaddrinfo(dest_sock_result);
+    //freeaddrinfo(dest_sock_result);
 
     // ----------------------------------------------------
     // SSL greeting to client
@@ -260,9 +259,9 @@ void handle_client(int client_sock_fd)
 
     // Multiplexing here as tcp is duplex.
     fd_set both_sockets;
-    struct timeval timeout;
-    timeout.tv_sec = 5;
-    timeout.tv_usec = 0;
+    struct timespec timeout;
+    timeout.tv_sec = 2;
+    timeout.tv_nsec = 0;
 
     while (1)
     {
@@ -270,7 +269,7 @@ void handle_client(int client_sock_fd)
         FD_SET(client_sock_fd, &both_sockets);
         FD_SET(dest_sock_fd, &both_sockets);
 
-        int select_result = select(FD_SETSIZE, &both_sockets, NULL, NULL, &timeout);
+        int select_result = pselect(FD_SETSIZE, &both_sockets, NULL, NULL, &timeout, NULL);
         if (select_result == -1)
         {
             printf("Thread %d failed to multiplex\n", thread_num);
