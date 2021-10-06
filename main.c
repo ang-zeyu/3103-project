@@ -176,8 +176,8 @@ void forward_socket_pair(int fd_one)
 
     fd_set both_sockets;
     struct timespec timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_nsec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = 300000000; // 0.3s
 
 #ifdef DEBUG_MESSAGES
     printf("Processing %d %d flow\n", fd_one, fd_two);
@@ -367,7 +367,9 @@ void handle_new_client(int client_sock_fd)
     char ip[(dest_sock_result->ai_family == AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN];
     inet_ntop(
         dest_sock_result->ai_family,
-        (dest_sock_result->ai_family == AF_INET) ? &dest_sock_result->ai_addr->sa_data[2] : &(((struct sockaddr_in6*)dest_sock_result->ai_addr)->sin6_addr),
+        (dest_sock_result->ai_family == AF_INET)
+            ? &(((struct sockaddr_in*)dest_sock_result->ai_addr)->sin_addr)
+            : &(((struct sockaddr_in6*)dest_sock_result->ai_addr)->sin6_addr),
         ip, (dest_sock_result->ai_family == AF_INET) ? INET_ADDRSTRLEN : INET6_ADDRSTRLEN
     );
     printf("Thread %d Fds %d attempting ip %s\n", thread_num, client_sock_fd, ip);
