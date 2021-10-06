@@ -212,14 +212,9 @@ int forward(int fd_from, int fd_to, int client_fd, int thread_num)
 // Forward and persist data between this pair of client / destination **for a while**
 // Why not completely multiplex? -- context switch is expensive
 // @param fd_one one of the client OR socket fds which received a fd event from select() multiplex
-void forward_socket_pair(int fd_one)
+// @param whether to assume there is an even available for fd_one right away
+void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
 {
-    int thread_num = omp_get_thread_num();
-
-    int fd_two = socket_descriptors[fd_one];
-    int client_fd = stream_infos[fd_one] == NULL ? fd_two : fd_one;
-    fd_set both_sockets;
-
 #ifdef DEBUG_MESSAGES
     // assert
     if (stream_infos[fd_one] == NULL && stream_infos[fd_two] == NULL)
@@ -230,6 +225,7 @@ void forward_socket_pair(int fd_one)
     printf("Processing %d %d flow\n", fd_one, fd_two);
 #endif
 
+    fd_set both_sockets;
     while (1)
     {
         FD_ZERO(&both_sockets);
@@ -237,10 +233,10 @@ void forward_socket_pair(int fd_one)
         FD_SET(fd_two, &both_sockets);
 
         int select_result = pselect(FD_SETSIZE, &both_sockets, NULL, NULL, &SOCKET_PAIR_TIMEOUT, NULL);
-
         if (select_result == -1)
         {
             printf("Thread %d Fds %d %d failed to multiplex\n", thread_num, fd_one, fd_two);
+            handle_errno();
             break;
         }
         else if (select_result == 0)
@@ -425,7 +421,7 @@ void handle_new_client(int client_sock_fd)
 
     // ----------------------------------------------------
 
-    forward_socket_pair(client_sock_fd);
+    forward_socket_pair(client_sock_fd, dest_sock_fd, client_sock_fd, thread_num);
 }
 
 
@@ -552,14 +548,22 @@ int main(int argc, char *argv[])
             // Existing connections, new data
             for (int i = 0; i < FD_SETSIZE; i++)
             {
-                if (socket_descriptors[i] && is_socket_processing[i] == 0 && FD_ISSET(i, &all_sockets))
+                if (i != listen_socket_fd && FD_ISSET(i, &all_sockets))
                 {
+                    // clear the other socket, will be handled in @forward_socket_pair if needed
+                    FD_CLR(socket_descriptors[i], &all_sockets);
+
                     is_socket_processing[i] = 1;
                     is_socket_processing[socket_descriptors[i]] = 1;
 
-                    // Same here
+                    // This block goes to the OpenMP threadpool
                     #pragma omp task
-                    forward_socket_pair(i);
+                    {
+                        int client_fd = stream_infos[i] == NULL ? socket_descriptors[i] : i;
+                        int thread_num = omp_get_thread_num();
+                        forward(i, socket_descriptors[i], client_fd, thread_num);
+                        forward_socket_pair(i, socket_descriptors[i], client_fd, thread_num);
+                    }
                 }
             }
             // -------------------------------------
