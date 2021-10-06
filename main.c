@@ -13,6 +13,21 @@
 
 const int NUM_MAX_QUEUED_CONNECTIONS = 100;
 const int NUM_THREADS = 8;
+
+// Main thread multiplexing **refresh** timeout (see use case in main())
+struct timespec MAIN_MULTIPLEX_TIMEOUT = {
+    tv_sec: 1,
+    tv_nsec: 0,
+};
+
+// Not TCP connection timeout!
+// See use in forward_socket_pair
+struct timespec SOCKET_PAIR_TIMEOUT = {
+    tv_sec: 0,
+    tv_nsec: 300000000, // 0.3s
+};
+
+
 int TELEMETRY_ENABLED = 0; // set in main()
 
 char BAD_REQUEST[] = {
@@ -30,7 +45,7 @@ char SSL_GREETING_HEADER[] = {
 };
 
 const int BUFFER_SIZE = 16384;
-char buffers[8 + 1][16384]; // + 1, main thread just does multiplexing
+char buffers[8][16384];
 
 char* BLACKLIST = NULL;
 
@@ -41,11 +56,11 @@ struct StreamInfo {
 };
 struct StreamInfo* stream_infos[FD_SETSIZE];
 
-int socket_descriptors[FD_SETSIZE]; // contains the other socket, 0 (stdin dummy) otherwise
-int is_socket_processing[FD_SETSIZE]; // 0 - nothing, 1 - a thread is processing it
+unsigned short socket_descriptors[FD_SETSIZE]; // contains the other socket, 0 (stdin dummy) otherwise
+unsigned char is_socket_processing[FD_SETSIZE]; // 0 - nothing, 1 - a thread is processing it
 
-
-#define DEBUG_MESSAGES 1
+// Comment to disable
+// #define DEBUG_MESSAGES 1
 
 
 
@@ -153,6 +168,47 @@ int parse_http_header(char* recv_buf, int num_bytes_read, int* port_num, char** 
 }
 
 
+int forward(int fd_from, int fd_to, int client_fd, int thread_num)
+{
+#ifdef DEBUG_MESSAGES
+    printf("Fds %d %d received fd event\n", fd_from, fd_to);
+#endif
+
+    int bytes_read = read(fd_from, buffers[thread_num], BUFFER_SIZE);
+    if (bytes_read == -1)
+    {
+        printf("Thread %d Fds %d %d could not read data, closing\n", thread_num, fd_from, fd_to);
+        cleanup_client_error(client_fd);
+        return 1;
+    }
+    else if (bytes_read == 0)
+    {
+        cleanup_client_completed(client_fd);
+        return 1;
+    }
+
+    stream_infos[client_fd]->byte_count += bytes_read;
+
+#ifdef DEBUG_MESSAGES
+    printf("Thread %d Fds %d %d read client fd event\n", thread_num, fd_from, fd_to);
+#endif
+
+    int write_result = write(fd_to, buffers[thread_num], bytes_read);
+    if (write_result == -1)
+    {
+        printf("Thread %d Fds %d %d failed to forward data\n", thread_num, fd_from, fd_to);
+        cleanup_client_error(client_fd);
+        return 1;
+    }
+
+#ifdef DEBUG_MESSAGES
+    printf("Thread %d Fds %d %d completed fd event %d %d bytes\n", thread_num, fd_from, fd_to, bytes_read, write_result);
+#endif
+
+    return 0;
+}
+
+
 // Forward and persist data between this pair of client / destination **for a while**
 // Why not completely multiplex? -- context switch is expensive
 // @param fd_one one of the client OR socket fds which received a fd event from select() multiplex
@@ -161,6 +217,8 @@ void forward_socket_pair(int fd_one)
     int thread_num = omp_get_thread_num();
 
     int fd_two = socket_descriptors[fd_one];
+    int client_fd = stream_infos[fd_one] == NULL ? fd_two : fd_one;
+    fd_set both_sockets;
 
 #ifdef DEBUG_MESSAGES
     // assert
@@ -169,17 +227,6 @@ void forward_socket_pair(int fd_one)
         printf("No stream infos\n");
         exit(1);
     }
-#endif
-
-    int client_fd = stream_infos[fd_one] == NULL ? fd_two : fd_one;
-    struct StreamInfo* info = stream_infos[client_fd];
-
-    fd_set both_sockets;
-    struct timespec timeout;
-    timeout.tv_sec = 0;
-    timeout.tv_nsec = 300000000; // 0.3s
-
-#ifdef DEBUG_MESSAGES
     printf("Processing %d %d flow\n", fd_one, fd_two);
 #endif
 
@@ -189,7 +236,7 @@ void forward_socket_pair(int fd_one)
         FD_SET(fd_one, &both_sockets);
         FD_SET(fd_two, &both_sockets);
 
-        int select_result = pselect(FD_SETSIZE, &both_sockets, NULL, NULL, &timeout, NULL);
+        int select_result = pselect(FD_SETSIZE, &both_sockets, NULL, NULL, &SOCKET_PAIR_TIMEOUT, NULL);
 
         if (select_result == -1)
         {
@@ -199,7 +246,7 @@ void forward_socket_pair(int fd_one)
         else if (select_result == 0)
         {
 #ifdef DEBUG_MESSAGES
-            printf("%d socket timed out\n", fd_one);
+            printf("Thread %d Fds %d %d no data for now\n", hread_num, fd_one, fd_two);
 #endif
             break;
         }
@@ -212,73 +259,18 @@ void forward_socket_pair(int fd_one)
         // fd_one -> fd_two
         if (FD_ISSET(fd_one, &both_sockets))
         {
-#ifdef DEBUG_MESSAGES
-            printf("Fds %d %d received client fd event\n", fd_one, fd_two);
-#endif
-
-            int bytes_read = read(fd_one, buffers[thread_num], BUFFER_SIZE);
-            if (bytes_read == -1)
+            if (forward(fd_one, fd_two, client_fd, thread_num))
             {
-                printf("Thread %d Fds %d %d could not read data from client, closing\n", thread_num, fd_one, fd_two);
-                break;
+                return;
             }
-            else if (bytes_read == 0)
-            {
-                cleanup_client_completed(client_fd);
-                break;
-            }
-
-            info->byte_count += bytes_read;
-
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d Fds %d %d read client fd event\n", thread_num, fd_one, fd_two);
-#endif
-
-            int write_result = write(fd_two, buffers[thread_num], bytes_read);
-            if (write_result == -1)
-            {
-                printf("Thread %d Fds %d %d failed to forward data to dest\n", thread_num, fd_one, fd_two);
-                break;
-            }
-
-
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d Fds %d %d completed client fd event %d %d bytes\n", thread_num, fd_one, fd_two, bytes_read, write_result);
-#endif
         }
-
 
         // fd_two -> fd_one
         if (FD_ISSET(fd_two, &both_sockets))
         {
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d Fds %d %d received dest fd event\n", thread_num, fd_one, fd_two);
-#endif
-
-
-            int bytes_read = read(fd_two, buffers[thread_num], BUFFER_SIZE);
-            if (bytes_read == -1)
+            if (forward(fd_two, fd_one, client_fd, thread_num))
             {
-                printf("Thread %d Fds %d %d could not read data from dest, closing\n", thread_num, fd_one, fd_two);
-                break;
-            }
-            else if (bytes_read == 0)
-            {
-                cleanup_client_completed(client_fd);
-                break;
-            }
-
-            info->byte_count += bytes_read;
-
-#ifdef DEBUG_MESSAGES
-            printf("Thread %d Fds %d %d read dest fd event\n", thread_num, fd_one, fd_two);
-#endif
-
-            int write_result = write(fd_one, buffers[thread_num], bytes_read);
-            if (write_result == -1)
-            {
-                printf("Thread %d Fds %d %d failed to forward data to client\n", thread_num, fd_one, fd_two);
-                break;
+                return;
             }
         }
     }
@@ -287,7 +279,7 @@ void forward_socket_pair(int fd_one)
     is_socket_processing[fd_two] = 0;
 
 #ifdef DEBUG_MESSAGES
-    printf("Thread %d Fds %d %d session completed %s\n", thread_num, fd_one, fd_two, info->domain);
+    printf("Thread %d Fds %d %d session completed %s\n", thread_num, fd_one, fd_two, stream_infos[client_fd]->domain);
 #endif
 }
 
@@ -510,11 +502,15 @@ int main(int argc, char *argv[])
 
 
             // -------------------------------------
-            int select_result = select(FD_SETSIZE, &all_sockets, NULL, NULL, NULL);
-            if (select_result == -1 || select_result == 0)
+            int select_result = pselect(FD_SETSIZE, &all_sockets, NULL, NULL, &MAIN_MULTIPLEX_TIMEOUT, NULL);
+            if (select_result == -1)
             {
                 printf("main loop failed to multiplex\n");
                 break;
+            }
+            else if (select_result == 0)
+            {
+                continue; // continue refreshing fd set
             }
             // -------------------------------------
 
@@ -558,8 +554,6 @@ int main(int argc, char *argv[])
             {
                 if (socket_descriptors[i] && is_socket_processing[i] == 0 && FD_ISSET(i, &all_sockets))
                 {
-                    FD_CLR(socket_descriptors[i], &all_sockets);
-
                     is_socket_processing[i] = 1;
                     is_socket_processing[socket_descriptors[i]] = 1;
 
