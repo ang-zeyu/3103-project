@@ -14,6 +14,7 @@
 const int NUM_MAX_QUEUED_CONNECTIONS = 100;
 const int NUM_THREADS = 8;
 const int BUFFER_SIZE = 16384;
+char buffers[9][16384];
 int TELEMETRY_ENABLED = 0; // set in main()
 
 char BAD_REQUEST[] = {
@@ -31,8 +32,6 @@ char SSL_GREETING_HEADER[] = {
 };
 
 char* BLACKLIST = NULL;
-
-
 
 void cleanup(int client_sock_fd)
 {
@@ -124,8 +123,7 @@ void handle_client(int client_sock_fd)
     printf("Thread %d handling new request\n", thread_num);
 #endif
 
-    char recv_buf[BUFFER_SIZE];
-    int num_bytes_read = read(client_sock_fd, &recv_buf, sizeof(recv_buf));
+    int num_bytes_read = read(client_sock_fd, buffers[thread_num], BUFFER_SIZE);
     if (num_bytes_read == -1)
     {
         printf("Thread %d failed to read new request\n", thread_num);
@@ -145,7 +143,7 @@ void handle_client(int client_sock_fd)
 
     int domain_len, port_num;
     char* url_start;
-    if (parse_http_header(recv_buf, num_bytes_read, &url_start, &domain_len, &port_num) == -1)
+    if (parse_http_header(buffers[thread_num], num_bytes_read, &url_start, &domain_len, &port_num) == -1)
     {
         printf("Error parsing http header %d\n", thread_num);
         cleanup(client_sock_fd);
@@ -246,15 +244,6 @@ void handle_client(int client_sock_fd)
 #endif
 
     // ----------------------------------------------------
-    
-    /* int first_write_result = write(dest_sock_fd, recv_buf, num_bytes_read);
-    if (first_write_result == -1)
-    {
-        printf("Thread %d failed to write\n", thread_num);
-        cleanup(client_sock_fd);
-        close(dest_sock_fd);
-        return;
-    } */
 
 #ifdef DEBUG_MESSAGES
     printf("Thread %d sent first message to dest %s\n", thread_num, ip);
@@ -267,8 +256,8 @@ void handle_client(int client_sock_fd)
     // Multiplexing here as tcp is duplex.
     fd_set both_sockets;
     struct timespec timeout;
-    timeout.tv_sec = 1;
-    timeout.tv_nsec = 0;
+    timeout.tv_sec = 0;
+    timeout.tv_nsec = 300000000; // 0.3s
 
     while (1)
     {
@@ -299,23 +288,21 @@ void handle_client(int client_sock_fd)
             printf("Thread %d received client fd event\n", thread_num);
 #endif
 
-            int read_result = read(client_sock_fd, recv_buf, sizeof(recv_buf));
-            if (read_result == -1)
+            int bytes_read = read(client_sock_fd, buffers[thread_num], BUFFER_SIZE);
+            if (bytes_read == -1)
             {
                 printf("Thread %d could not read data from client, closing\n", thread_num);
                 break;
             }
-            else if (read_result == 0)
+            else if (bytes_read == 0)
             {
                 printf("Thread %d connection closing\n", thread_num);
                 break;
             }
 
-            total_bytes += read_result;
+            total_bytes += bytes_read;
 
-            //printf("port %d\n", (int)recv_buf[0]);
-
-            int write_result = write(dest_sock_fd, recv_buf, read_result);
+            int write_result = write(dest_sock_fd, buffers[thread_num], bytes_read);
             if (write_result == -1)
             {
                 printf("Thread %d failed to forward data to dest\n", thread_num);
@@ -324,7 +311,7 @@ void handle_client(int client_sock_fd)
 
 
 #ifdef DEBUG_MESSAGES
-            printf("Thread %d completed client fd event %d %d bytes\n", thread_num, read_result, write_result);
+            printf("Thread %d completed client fd event %d %d bytes\n", thread_num, bytes_read, write_result);
 #endif
         }
 
@@ -335,21 +322,21 @@ void handle_client(int client_sock_fd)
 #endif
 
 
-            int read_result = read(dest_sock_fd, recv_buf, sizeof(recv_buf));
-            if (read_result == -1)
+            int bytes_read = read(dest_sock_fd, buffers[thread_num], BUFFER_SIZE);
+            if (bytes_read == -1)
             {
                 printf("Thread %d could not read data from dest, closing\n", thread_num);
                 break;
             }
-            else if (read_result == 0)
+            else if (bytes_read == 0)
             {
                 printf("Thread %d connection closing\n", thread_num);
                 break;
             }
 
-            total_bytes += read_result;
+            total_bytes += bytes_read;
 
-            int write_result = write(client_sock_fd, recv_buf, read_result);
+            int write_result = write(client_sock_fd, buffers[thread_num], bytes_read);
             if (write_result == -1)
             {
                 printf("Thread %d failed to forward data to client\n", thread_num);
@@ -357,7 +344,7 @@ void handle_client(int client_sock_fd)
             }
 
 #ifdef DEBUG_MESSAGES
-            printf("Thread %d completed dest fd event %d %d bytes\n", thread_num, read_result, write_result);
+            printf("Thread %d completed dest fd event %d %d bytes\n", thread_num, bytes_read, write_result);
 #endif
         }
     }
