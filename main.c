@@ -105,7 +105,14 @@ void cleanup_client(int client_sock_fd)
 void handle_errno()
 {
     int thread_num = omp_get_thread_num();
-    printf("Thread %d error code %d\n", thread_num, errno);
+    if (errno)
+    {
+        printf("(This might be expected) Thread %d error code %d\n%s", thread_num, errno, strerror(errno));
+    }
+    else
+    {
+        printf("Thread %d errno = 0 (no error)\n", thread_num);
+    }
 }
 
 
@@ -306,7 +313,7 @@ void handle_new_client(int client_sock_fd)
     }
     else if (num_bytes_read == 0)
     {
-        printf("Thread %d Fds %d Error no bytes after accepting\n", thread_num, client_sock_fd);
+        printf("Thread %d Fds %d No bytes after accepting (likely connection terminated by client)\n", thread_num, client_sock_fd);
         cleanup_client_error(client_sock_fd);
         return;
     }
@@ -505,7 +512,7 @@ int main(int argc, char *argv[])
             int select_result = pselect(FD_SETSIZE, &all_sockets, NULL, NULL, &MAIN_MULTIPLEX_TIMEOUT, NULL);
             if (select_result == -1)
             {
-                printf("main loop failed to multiplex\n");
+                printf("Main loop failed to multiplex\n");
                 break;
             }
             else if (select_result == 0)
@@ -521,7 +528,7 @@ int main(int argc, char *argv[])
             {
 
 #ifdef DEBUG_MESSAGES
-                printf("Main thread accepting new request\n");
+                printf("Main thread accepting new connection\n");
 #endif
 
                 struct sockaddr_in client_sock_addr;
@@ -536,9 +543,9 @@ int main(int argc, char *argv[])
                 }
 
 #ifdef DEBUG_MESSAGES
-                char client_ip[20];
-                inet_ntop(client_sock_addr.sin_family, &client_sock_addr.sin_addr.s_addr, client_ip, 20);
-                printf("Main thread accepted new request from %s\n", client_ip);
+                char client_ip[INET_ADDRSTRLEN];
+                inet_ntop(client_sock_addr.sin_family, &client_sock_addr.sin_addr.s_addr, client_ip, INET_ADDRSTRLEN);
+                printf("Main thread accepted new connection from %s\n", client_ip);
 #endif
 
                 // This function / task goes to the OpenMP threadpool
