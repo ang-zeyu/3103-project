@@ -248,8 +248,8 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
     struct epoll_event fd_two_epoll_ev;
     fd_two_epoll_ev.data.fd = fd_two;
     fd_two_epoll_ev.events = EPOLLIN;
-    if ((epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_ADD, fd_one, &fd_one_epoll_ev) == -1
-        ||  epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_ADD, fd_two, &fd_two_epoll_ev) == -1) && errno != EEXIST)
+    if ((epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_ADD, fd_one, &fd_one_epoll_ev) == -1 && errno != EEXIST)
+        || (epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_ADD, fd_two, &fd_two_epoll_ev) == -1 && errno != EEXIST))
     {
         printf("Thread %d Fds %d %d failed to add fds to duplex e_fd\n", thread_num, fd_one, fd_two);
         cleanup_client_error(client_fd);
@@ -301,8 +301,8 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
         }
     }
 
-    if ((epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_DEL, fd_one, NULL) == -1
-        || epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_DEL, fd_two, NULL) == -1) && errno != ENOENT)
+    if ((epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_DEL, fd_one, NULL) == -1 && errno != ENOENT)
+        || (epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_DEL, fd_two, NULL) == -1 && errno != ENOENT))
     {
         // Just in case, this branch should really never happen
         printf("Thread %d Fds %d %d failed to delete fds from duplex e_fd, creating new duplex fd\n", thread_num, fd_one, fd_two);
@@ -318,8 +318,8 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
     }
 
     // Add back for listening, as the connection wasn't closed yet
-    if ((epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, fd_one, &fd_one_epoll_ev) == -1
-        || epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, fd_two, &fd_two_epoll_ev) == -1) && errno != EEXIST)
+    if ((epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, fd_one, &fd_one_epoll_ev) == -1 && errno != EEXIST)
+        || (epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, fd_two, &fd_two_epoll_ev) == -1 && errno != EEXIST))
     {
         printf("Thread %d Fds %d %d failed to add fds back\n", thread_num, fd_one, fd_two);
         cleanup_client_error(client_fd);
@@ -657,9 +657,9 @@ int main(int argc, char *argv[])
                     int event_fd = waited_events[ev_idx].data.fd;
 
                     // Clear both sockets
-                    if ((epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, event_fd, NULL) == -1
+                    if ((epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, event_fd, NULL) == -1 && errno != ENOENT)
                         // Clear the other socket as it will be handled in @forward_socket_pair if needed
-                        || epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, socket_descriptors[event_fd], NULL) == -1) && errno != ENOENT)
+                        || (epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, socket_descriptors[event_fd], NULL) == -1 && errno != ENOENT))
                     {
                         printf("Main thread failed to clear fds %d %d\n", event_fd, socket_descriptors[event_fd]);
                         continue; // retry
