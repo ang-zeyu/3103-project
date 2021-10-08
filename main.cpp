@@ -50,7 +50,7 @@ const int BUFFER_SIZE = 16384;
 char buffers[8][16384];
 
 struct StreamInfo {
-    clock_t start_time;
+    timeval start_time;
     long byte_count;
     char* domain;
 };
@@ -68,8 +68,11 @@ void print_telemetry(struct StreamInfo* info)
 {
     if (TELEMETRY_ENABLED)
     {
-        float time = ((float)(clock() - info->start_time)) / CLOCKS_PER_SEC;
-        printf("Hostname: %s, Size: %ld bytes, Time: %0.3f sec\n", info->domain, info->byte_count, time);
+        timeval end_time;
+        gettimeofday(&end_time, NULL);
+        int seconds = end_time.tv_sec - info->start_time.tv_sec;
+        int milliseconds = (end_time.tv_usec - info->start_time.tv_usec) / 1000;
+        printf("Hostname: %s, Size: %ld bytes, Time: %d.%d sec\n", info->domain, info->byte_count, seconds, milliseconds);
     }
 }
 
@@ -305,7 +308,7 @@ void handle_new_client(int client_sock_fd, std::vector<std::string> blacklist)
 {
     struct StreamInfo* info = (StreamInfo *)malloc(sizeof(struct StreamInfo));
     stream_infos[client_sock_fd] = info;
-    info->start_time = clock();
+    gettimeofday(&info->start_time, NULL);
     info->domain = NULL;
     info->byte_count = 0;
 
