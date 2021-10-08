@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <omp.h>
 #include <time.h>
+#include <signal.h>
 #include <vector>
 #include <string>
 
@@ -515,6 +516,9 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    // Ignore SIGPIPE that can occur when trying to write 400 Bad request response,
+    // As a broken pipe may be an expected part of our error handling
+    signal(SIGPIPE, SIG_IGN);
 
     // OpenMP has a thread pool, this sets the number of threads there.
     omp_set_num_threads(NUM_THREADS);
