@@ -10,6 +10,8 @@
 #include <errno.h>
 #include <omp.h>
 #include <time.h>
+#include <vector>
+#include <string>
 
 const int NUM_MAX_QUEUED_CONNECTIONS = 100;
 const int NUM_THREADS = 8;
@@ -46,8 +48,6 @@ char SSL_GREETING_HEADER[] = {
 
 const int BUFFER_SIZE = 16384;
 char buffers[8][16384];
-
-char* BLACKLIST = NULL;
 
 struct StreamInfo {
     clock_t start_time;
@@ -170,10 +170,9 @@ int parse_http_header(char* recv_buf, int num_bytes_read, int* port_num, char** 
         }
     }
 
-    *domain = malloc((domain_len + 1) * sizeof(char));
+    *domain = (char *)malloc((domain_len + 1) * sizeof(char));
     memcpy(*domain, url_start, domain_len);
     (*domain)[domain_len] = '\0';
-
     return 0;
 }
 
@@ -252,7 +251,7 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
         else if (select_result == 0)
         {
 #ifdef DEBUG_MESSAGES
-            printf("Thread %d Fds %d %d no data for now\n", hread_num, fd_one, fd_two);
+            printf("Thread %d Fds %d %d no data for now\n", thread_num, fd_one, fd_two);
 #endif
             break;
         }
@@ -290,9 +289,22 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
 }
 
 
-void handle_new_client(int client_sock_fd)
+int in_blacklist(std::vector<std::string> blacklist, char* domain) {
+    for (int i = 0; i < blacklist.size(); i++) {
+        const char* blacklist_domain = blacklist.at(i).c_str();
+        const char* comp = strstr(blacklist_domain, domain);
+        if(strstr(domain, blacklist_domain) != NULL) {
+            // found, means its in blacklist
+            return 1;
+        }
+    }
+    return 0;
+}
+
+
+void handle_new_client(int client_sock_fd, std::vector<std::string> blacklist)
 {
-    struct StreamInfo* info = malloc(sizeof(struct StreamInfo));
+    struct StreamInfo* info = (StreamInfo *)malloc(sizeof(struct StreamInfo));
     stream_infos[client_sock_fd] = info;
     info->start_time = clock();
     info->domain = NULL;
@@ -330,7 +342,15 @@ void handle_new_client(int client_sock_fd)
         cleanup_client_error(client_sock_fd);
         return;
     }
+    // ----------------------------------------------------
 
+    // ----------------------------------------------------
+    // Check Blacklist
+    if (in_blacklist(blacklist, info->domain) == 1) {
+        printf("Thread %d Fds %d blocked from blacklisted domain %s\n", thread_num, client_sock_fd, info->domain);
+        cleanup_client_error(client_sock_fd);
+        return;
+    }
     // ----------------------------------------------------
     // "DNS query"
 
@@ -436,6 +456,20 @@ void handle_new_client(int client_sock_fd)
 }
 
 
+std::vector<std::string> init_blacklist(FILE* blacklist_fd) {
+    std::vector<std::string> blacklist;
+    char buffer[10000];
+    if (blacklist_fd != NULL) {
+        while (fgets(buffer, sizeof(buffer), blacklist_fd)) {
+#ifdef DEBUG_MESSAGES
+                printf("Blacklisted: %s\n", buffer);
+#endif
+            blacklist.push_back(buffer);
+        }
+    }
+    return blacklist;
+}
+
 
 int main(int argc, char *argv[])
 {
@@ -454,7 +488,11 @@ int main(int argc, char *argv[])
     TELEMETRY_ENABLED = atoi(argv[2]);
 
     FILE* blacklist_fd = fopen(argv[3], "r");
-    // TODO
+    std::vector<std::string> blacklist = init_blacklist(blacklist_fd);
+
+#ifdef DEBUG_MESSAGES
+    printf("Size of blacklist %ld\n", blacklist.size());
+#endif
 
     // Listen socket
     int listen_socket_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -532,7 +570,7 @@ int main(int argc, char *argv[])
 #endif
 
                 struct sockaddr_in client_sock_addr;
-                int len = sizeof(client_sock_addr);
+                socklen_t len = sizeof(client_sock_addr);
                 bzero(&client_sock_addr, len);
                 int client_sock_fd = accept(listen_socket_fd, (struct sockaddr*)&client_sock_addr, &len);
                 if (client_sock_fd == -1)
@@ -550,7 +588,7 @@ int main(int argc, char *argv[])
 
                 // This function / task goes to the OpenMP threadpool
                 #pragma omp task
-                handle_new_client(client_sock_fd);
+                handle_new_client(client_sock_fd, blacklist);
             }
             // -------------------------------------
 
