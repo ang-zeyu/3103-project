@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <arpa/inet.h>
+#include <sys/epoll.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/time.h>
@@ -19,18 +20,10 @@ const int NUM_MAX_QUEUED_CONNECTIONS = 100;
 const int NUM_THREADS = 8;
 
 // Main thread multiplexing **refresh** timeout (see use case in main())
-struct timespec MAIN_MULTIPLEX_TIMEOUT = {
-    tv_sec: 1,
-    tv_nsec: 0,
-};
+int MAIN_MULTIPLEX_FD = 0; // set in main() later
 
-// Not TCP connection timeout!
-// See use in forward_socket_pair
-struct timespec SOCKET_PAIR_TIMEOUT = {
-    tv_sec: 0,
-    tv_nsec: 300000000, // 0.3s
-};
-
+// Thread tcp duplex muiltiplexing
+int THREAD_DUPLEX_FDS[8]; // set in main() later
 
 int TELEMETRY_ENABLED = 0; // set in main()
 
@@ -59,7 +52,6 @@ struct StreamInfo {
 struct StreamInfo* stream_infos[FD_SETSIZE];
 
 unsigned short socket_descriptors[FD_SETSIZE]; // contains the other socket, 0 (stdin dummy) otherwise
-unsigned char is_socket_processing[FD_SETSIZE]; // 0 - nothing, 1 - a thread is processing it
 
 // Comment to disable
 // #define DEBUG_MESSAGES 1
@@ -100,11 +92,11 @@ void cleanup_client(int client_sock_fd)
     {
         close(dest_sock);
         socket_descriptors[dest_sock] = 0;
-        is_socket_processing[dest_sock] = 0;
+        epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, dest_sock, NULL);
     }
 
     socket_descriptors[client_sock_fd] = 0;
-    is_socket_processing[client_sock_fd] = 0;
+    epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, client_sock_fd, NULL);
 }
 
 
@@ -242,21 +234,33 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
     printf("Processing %d %d flow\n", fd_one, fd_two);
 #endif
 
-    fd_set both_sockets;
+    struct epoll_event fd_one_epoll_ev;
+    fd_one_epoll_ev.data.fd = fd_one;
+    fd_one_epoll_ev.events = EPOLLIN;
+
+    struct epoll_event fd_two_epoll_ev;
+    fd_two_epoll_ev.data.fd = fd_two;
+    fd_two_epoll_ev.events = EPOLLIN;
+    if (epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_ADD, fd_one, &fd_one_epoll_ev) == -1
+        ||  epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_ADD, fd_two, &fd_two_epoll_ev) == -1)
+    {
+        printf("Thread %d Fds %d %d failed to add fds to duplex e_fd\n", thread_num, fd_one, fd_two);
+        cleanup_client_error(client_fd);
+        return;
+    }
+
+    struct epoll_event waited_events[2];
+
     while (1)
     {
-        FD_ZERO(&both_sockets);
-        FD_SET(fd_one, &both_sockets);
-        FD_SET(fd_two, &both_sockets);
-
-        int select_result = pselect(FD_SETSIZE, &both_sockets, NULL, NULL, &SOCKET_PAIR_TIMEOUT, NULL);
-        if (select_result == -1)
+        int epoll_result = epoll_wait(THREAD_DUPLEX_FDS[thread_num], waited_events, 2, 300);
+        if (epoll_result == -1)
         {
             printf("Thread %d Fds %d %d failed to multiplex\n", thread_num, fd_one, fd_two);
             handle_errno();
             break;
         }
-        else if (select_result == 0)
+        else if (epoll_result == 0)
         {
 #ifdef DEBUG_MESSAGES
             printf("Thread %d Fds %d %d no data for now\n", thread_num, fd_one, fd_two);
@@ -266,30 +270,43 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
 
 
 #ifdef DEBUG_MESSAGES
-        printf("Thread %d Fds %d %d received %d multiplex event(s)\n", thread_num, fd_one, fd_two, select_result);
+        printf("Thread %d Fds %d %d received %d multiplex event(s)\n", thread_num, fd_one, fd_two, epoll_result);
 #endif
 
-        // fd_one -> fd_two
-        if (FD_ISSET(fd_one, &both_sockets))
+        for (int i = 0; i < epoll_result; i++)
         {
-            if (forward(fd_one, fd_two, client_fd, thread_num))
+            if (waited_events[i].data.fd == fd_one)
             {
-                return;
+                // fd_one to fd_two
+                if (forward(fd_one, fd_two, client_fd, thread_num))
+                {
+                    return;
+                }
             }
-        }
-
-        // fd_two -> fd_one
-        if (FD_ISSET(fd_two, &both_sockets))
-        {
-            if (forward(fd_two, fd_one, client_fd, thread_num))
+            else if (waited_events[i].data.fd == fd_two)
             {
-                return;
+                // fd_two to fd_one
+                if (forward(fd_two, fd_one, client_fd, thread_num))
+                {
+                    return;
+                }
             }
         }
     }
 
-    is_socket_processing[fd_one] = 0;
-    is_socket_processing[fd_two] = 0;
+    // Add back for listening, as the connection wasn't closed yet
+    if (epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_DEL, fd_one, NULL) == -1
+        || epoll_ctl(THREAD_DUPLEX_FDS[thread_num], EPOLL_CTL_DEL, fd_two, NULL) == -1)
+    {
+        printf("Thread %d Fds %d %d failed to delete fds from duplex e_fd\n", thread_num, fd_one, fd_two);
+    }
+
+    if (epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, fd_one, &fd_one_epoll_ev) == -1
+        || epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, fd_two, &fd_two_epoll_ev) == -1)
+    {
+        printf("Thread %d Fds %d %d failed to add fds back\n", thread_num, fd_one, fd_two);
+        return;
+    }
 
 #ifdef DEBUG_MESSAGES
     printf("Thread %d Fds %d %d session completed %s\n", thread_num, fd_one, fd_two, stream_infos[client_fd]->domain);
@@ -422,17 +439,13 @@ void handle_new_client(int client_sock_fd, std::vector<std::string> blacklist)
         return;
     }
 
-    // These 4 writes must be in this order: is_socket_processing then socket_descriptors
-    is_socket_processing[client_sock_fd] = 1;
-    is_socket_processing[dest_sock_fd] = 1;
-    asm volatile("" ::: "memory"); // sequential consistency without atomics / cs
     socket_descriptors[client_sock_fd] = dest_sock_fd;
     socket_descriptors[dest_sock_fd] = client_sock_fd;
 
     int connect_result = connect(dest_sock_fd, dest_sock_result->ai_addr, dest_sock_result->ai_addrlen);
     if (connect_result != 0)
     {
-        printf("Thread %d Fds %d %d failed to open tcp connection to destination\n", thread_num, client_sock_fd, dest_sock_fd);
+        printf("Thread %d Fds %d %d failed to open tcp connection to destination %s\n", thread_num, client_sock_fd, dest_sock_fd, info->domain);
         cleanup_client_error(client_sock_fd);
         return;
     }
@@ -519,20 +532,43 @@ int main(int argc, char *argv[])
     }
 
     // Ignore SIGPIPE that can occur when trying to write 400 Bad request response,
-    // As a broken pipe may be an expected part of our error handling
+    // As a broken pipe may (e.g. if the client pre-emptively closed the connection) be an expected part of our error handling
     signal(SIGPIPE, SIG_IGN);
 
     // OpenMP has a thread pool, this sets the number of threads there.
     omp_set_num_threads(NUM_THREADS);
+    omp_set_dynamic(0); // prevent dynamic adjustment of the amount of threads (OpenMP reduces it sometimes)
 
 
     for (int i = 0; i < FD_SETSIZE; i++)
     {
         socket_descriptors[i] = 0;
-        is_socket_processing[i] = 0;
         stream_infos[i] = NULL;
     }
-    fd_set all_sockets;
+
+    MAIN_MULTIPLEX_FD = epoll_create(1); // 1 means nothing, obsolete parameter - see https://man7.org/linux/man-pages/man2/epoll_create.2.html
+    if (MAIN_MULTIPLEX_FD == -1)
+    {
+        printf("Failed to create MAIN_MULTIPLEX_FD e_fd\n");
+        exit(1);
+    }
+
+    for (int i = 0; i < NUM_THREADS; i++)
+    {
+        THREAD_DUPLEX_FDS[i] = epoll_create(1);
+        if (THREAD_DUPLEX_FDS[i] == -1)
+        {
+            printf("Failed to create %d thread e_fd\n", i);
+            exit(1);
+        }
+    }
+
+    struct epoll_event epoll_ev;
+    epoll_ev.data.fd = listen_socket_fd;
+    epoll_ev.events = EPOLLIN;
+    epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_ADD, listen_socket_fd, &epoll_ev);
+
+    struct epoll_event waited_events[NUM_THREADS];
 
     // This directive defines a **parallel region** in which other OpenMP directives may be placed
     // May be ignored.
@@ -543,91 +579,82 @@ int main(int argc, char *argv[])
         while (1)
         {
             // -------------------------------------
-            // Refresh fd set
-            FD_ZERO(&all_sockets);
-            FD_SET(listen_socket_fd, &all_sockets);
-            for (int i = 0; i < FD_SETSIZE; i++)
-            {
-                if (socket_descriptors[i] && is_socket_processing[i] == 0)
-                {
-                    FD_SET(i, &all_sockets);
-                }
-            }
-            // -------------------------------------
 
-
-            // -------------------------------------
-            int select_result = pselect(FD_SETSIZE, &all_sockets, NULL, NULL, &MAIN_MULTIPLEX_TIMEOUT, NULL);
-            if (select_result == -1)
+            int epoll_result = epoll_wait(MAIN_MULTIPLEX_FD, waited_events, NUM_THREADS, 1000);
+            if (epoll_result == -1)
             {
                 printf("Main loop failed to multiplex\n");
                 break;
             }
-            else if (select_result == 0)
+            else if (epoll_result == 0)
             {
                 continue; // continue refreshing fd set
             }
             // -------------------------------------
 
-
-            // -------------------------------------
-            // New connection
-            if (FD_ISSET(listen_socket_fd, &all_sockets))
+            for (int ev_idx = 0; ev_idx < epoll_result; ev_idx++)
             {
-
-#ifdef DEBUG_MESSAGES
-                printf("Main thread accepting new connection\n");
-#endif
-
-                struct sockaddr_in client_sock_addr;
-                socklen_t len = sizeof(client_sock_addr);
-                bzero(&client_sock_addr, len);
-                int client_sock_fd = accept(listen_socket_fd, (struct sockaddr*)&client_sock_addr, &len);
-                if (client_sock_fd == -1)
+                // -------------------------------------
+                // New connection
+                if (waited_events[ev_idx].data.fd == listen_socket_fd)
                 {
-                    printf("Main thread error-ed in @accept call\n");
-                    handle_errno();
-                    break;
+
+    #ifdef DEBUG_MESSAGES
+                    printf("Main thread accepting new connection\n");
+    #endif
+
+                    struct sockaddr_in client_sock_addr;
+                    socklen_t len = sizeof(client_sock_addr);
+                    bzero(&client_sock_addr, len);
+                    int client_sock_fd = accept(listen_socket_fd, (struct sockaddr*)&client_sock_addr, &len);
+                    if (client_sock_fd == -1)
+                    {
+                        printf("Main thread error-ed in @accept call\n");
+                        handle_errno();
+                        break;
+                    }
+
+    #ifdef DEBUG_MESSAGES
+                    char client_ip[INET_ADDRSTRLEN];
+                    inet_ntop(client_sock_addr.sin_family, &client_sock_addr.sin_addr.s_addr, client_ip, INET_ADDRSTRLEN);
+                    printf("Main thread accepted new connection from %s\n", client_ip);
+    #endif
+
+                    // This function / task goes to the OpenMP threadpool
+                    #pragma omp task
+                    handle_new_client(client_sock_fd, blacklist);
                 }
-
-#ifdef DEBUG_MESSAGES
-                char client_ip[INET_ADDRSTRLEN];
-                inet_ntop(client_sock_addr.sin_family, &client_sock_addr.sin_addr.s_addr, client_ip, INET_ADDRSTRLEN);
-                printf("Main thread accepted new connection from %s\n", client_ip);
-#endif
-
-                // This function / task goes to the OpenMP threadpool
-                #pragma omp task
-                handle_new_client(client_sock_fd, blacklist);
-            }
-            // -------------------------------------
-
-
-            // -------------------------------------
-            // Existing connections, new data
-            for (int i = 0; i < FD_SETSIZE; i++)
-            {
-                if (i != listen_socket_fd && FD_ISSET(i, &all_sockets))
+                // -------------------------------------
+                // -------------------------------------
+                // Existing connections, new data
+                else
                 {
-                    // clear the other socket, will be handled in @forward_socket_pair if needed
-                    FD_CLR(socket_descriptors[i], &all_sockets);
+                    int event_fd = waited_events[ev_idx].data.fd;
 
-                    is_socket_processing[i] = 1;
-                    is_socket_processing[socket_descriptors[i]] = 1;
+                    // Clear both sockets
+                    if (epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, event_fd, NULL) == -1
+                        // Clear the other socket as it will be handled in @forward_socket_pair if needed
+                        || epoll_ctl(MAIN_MULTIPLEX_FD, EPOLL_CTL_DEL, socket_descriptors[event_fd], NULL) == -1)
+                    {
+                        printf("Main thread failed to clear fds %d %d\n", event_fd, socket_descriptors[event_fd]);
+                        continue; // retry
+                    }
 
                     // This block goes to the OpenMP threadpool
                     #pragma omp task
                     {
-                        int client_fd = stream_infos[i] == NULL ? socket_descriptors[i] : i;
+                        int client_fd = stream_infos[event_fd] == NULL
+                            ? socket_descriptors[event_fd]
+                            : event_fd;
                         int thread_num = omp_get_thread_num();
-                        if (forward(i, socket_descriptors[i], client_fd, thread_num) == 0)
+                        if (forward(event_fd, socket_descriptors[event_fd], client_fd, thread_num) == 0)
                         {
-                            forward_socket_pair(i, socket_descriptors[i], client_fd, thread_num);
+                            forward_socket_pair(event_fd, socket_descriptors[event_fd], client_fd, thread_num);
                         }
                     }
                 }
+                // -------------------------------------
             }
-            // -------------------------------------
         }
     }
 }
