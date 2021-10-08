@@ -292,7 +292,6 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
 int in_blacklist(std::vector<std::string> blacklist, char* domain) {
     for (int i = 0; i < blacklist.size(); i++) {
         const char* blacklist_domain = blacklist.at(i).c_str();
-        const char* comp = strstr(blacklist_domain, domain);
         if(strstr(domain, blacklist_domain) != NULL) {
             // found, means its in blacklist
             return 1;
