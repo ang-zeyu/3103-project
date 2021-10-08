@@ -124,6 +124,13 @@ void cleanup_client_error(int client_sock_fd)
 }
 
 
+void cleanup_client_blacklisted(int client_sock_fd)
+{
+    write(client_sock_fd, BAD_REQUEST, sizeof(BAD_REQUEST));
+    cleanup_client(client_sock_fd);
+}
+
+
 void cleanup_client_completed(int client_sock_fd)
 {
 #ifdef DEBUG_MESSAGES
@@ -372,7 +379,7 @@ void handle_new_client(int client_sock_fd, std::vector<std::string> blacklist)
     // Check Blacklist
     if (in_blacklist(blacklist, info->domain) == 1) {
         printf("Thread %d Fds %d blocked from blacklisted domain %s\n", thread_num, client_sock_fd, info->domain);
-        cleanup_client_error(client_sock_fd);
+        cleanup_client_blacklisted(client_sock_fd);
         return;
     }
     // ----------------------------------------------------
