@@ -113,12 +113,14 @@ void handle_errno()
     int thread_num = omp_get_thread_num();
     if (errno)
     {
-        printf("(This might be expected) Thread %d error code %d\n%s", thread_num, errno, strerror(errno));
+        printf("(This might be expected) Thread %d error code %d\n%s\n", thread_num, errno, strerror(errno));
     }
+#ifdef DEBUG_MESSAGES
     else
     {
         printf("Thread %d errno = 0 (no error)\n", thread_num);
     }
+#endif
 }
 
 
