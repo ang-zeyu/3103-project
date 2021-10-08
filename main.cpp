@@ -322,9 +322,9 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
 
 
 int in_blacklist(std::vector<std::string> blacklist, char* domain) {
-    for (int i = 0; i < blacklist.size(); i++) {
-        const char* blacklist_domain = blacklist.at(i).c_str();
-        if(strstr(domain, blacklist_domain) != NULL) {
+    for (std::string blacklist_domain : blacklist) {
+        std::string domain_str(domain);
+        if(domain_str.find(blacklist_domain) != std::string::npos) {
             // found, means its in blacklist
             return 1;
         }
@@ -491,7 +491,10 @@ std::vector<std::string> init_blacklist(FILE* blacklist_fd) {
 #ifdef DEBUG_MESSAGES
                 printf("Blacklisted: %s\n", buffer);
 #endif
-            blacklist.push_back(buffer);
+            char* blacklist_item = (char*) malloc(sizeof(buffer) + 1);
+            strcpy(blacklist_item, buffer);
+            blacklist_item[strcspn(blacklist_item, "\n")] = 0;
+            blacklist.push_back(blacklist_item);
         }
     }
     return blacklist;
