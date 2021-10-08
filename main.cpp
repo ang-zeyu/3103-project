@@ -70,9 +70,10 @@ void print_telemetry(struct StreamInfo* info)
     {
         timeval end_time;
         gettimeofday(&end_time, NULL);
-        int seconds = end_time.tv_sec - info->start_time.tv_sec;
-        int milliseconds = (end_time.tv_usec - info->start_time.tv_usec) / 1000;
-        printf("Hostname: %s, Size: %ld bytes, Time: %d.%d sec\n", info->domain, info->byte_count, seconds, milliseconds);
+        double seconds = end_time.tv_sec - info->start_time.tv_sec;
+        double microseconds_in_seconds = (((double)end_time.tv_usec) - ((double)info->start_time.tv_usec)) / 1000000.0;
+        double time = seconds + microseconds_in_seconds;
+        printf("Hostname: %s, Size: %ld bytes, Time: %0.3lf sec\n", info->domain, info->byte_count, time);
     }
 }
 
