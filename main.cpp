@@ -514,9 +514,9 @@ std::vector<std::string> init_blacklist(FILE* blacklist_fd) {
 
 int main(int argc, char *argv[])
 {
-    if (argc == 0)
+    if (argc < 4)
     {
-        printf("No port number specified!\n");
+        printf("Insufficient arguments specified!\n");
         return -1;
     }
     
