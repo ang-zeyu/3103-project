@@ -1,2 +1,3 @@
 google.com
-yahoo.com
+idsync.analytics.yahoo
+mathid
