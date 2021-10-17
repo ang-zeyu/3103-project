@@ -1,0 +1,161 @@
+./proxy 8080 1 blacklist.txt
+Hostname: s.yimg.com, Size: 8274 bytes, Time: 0.034 sec
+Hostname: s.yimg.com, Size: 9659 bytes, Time: 0.035 sec
+Hostname: s.yimg.com, Size: 3745 bytes, Time: 0.038 sec
+Hostname: s.yimg.com, Size: 6419 bytes, Time: 0.073 sec
+Hostname: s.yimg.com, Size: 3049 bytes, Time: 0.038 sec
+Hostname: www.yahoo.com, Size: 36767 bytes, Time: 0.078 sec
+Hostname: www.yahoo.com, Size: 35953 bytes, Time: 0.091 sec
+Hostname: 12.at.atwola.com, Size: 3031 bytes, Time: 0.070 sec
+Hostname: 12.at.atwola.com, Size: 3030 bytes, Time: 0.065 sec
+Hostname: 12.at.atwola.com, Size: 3031 bytes, Time: 0.069 sec
+Thread 3 Fds 48 blocked from blacklisted domain tag.idsync.analytics.yahoo.com
+Hostname: 12.at.atwola.com, Size: 3031 bytes, Time: 0.064 sec
+Hostname: 12.at.atwola.com, Size: 3031 bytes, Time: 0.067 sec
+Hostname: udc.yahoo.com, Size: 11507 bytes, Time: 0.042 sec
+Hostname: udc.yahoo.com, Size: 8962 bytes, Time: 0.029 sec
+Hostname: geo.yahoo.com, Size: 8257 bytes, Time: 0.213 sec
+Thread 4 Fds 56 blocked from blacklisted domain service.idsync.analytics.yahoo.com
+Thread 5 Fds 60 blocked from blacklisted domain service.idsync.analytics.yahoo.com
+Hostname: widgets.zemanta.com, Size: 4548 bytes, Time: 0.114 sec
+Hostname: prod-m-node-2111.ssp.advertising.com, Size: 2505 bytes, Time: 0.144 sec
+Thread 7 Fds 65 blocked from blacklisted domain service.idsync.analytics.yahoo.com
+Hostname: cdn.js7k.com, Size: 82221 bytes, Time: 0.142 sec
+Hostname: udc.yahoo.com, Size: 9680 bytes, Time: 0.089 sec
+Hostname: cdn.js7k.com, Size: 82224 bytes, Time: 0.176 sec
+Hostname: geo.yahoo.com, Size: 8335 bytes, Time: 0.218 sec
+Hostname: geo.yahoo.com, Size: 8451 bytes, Time: 0.212 sec
+Hostname: assets.video.yahoo.net, Size: 50410 bytes, Time: 0.078 sec
+Hostname: vop-yahoo.secure.footprint.net, Size: 6913 bytes, Time: 0.733 sec
+Hostname: video-api.yql.yahoo.com, Size: 22867 bytes, Time: 0.296 sec
+Thread 7 Fds 65 blocked from blacklisted domain service.idsync.analytics.yahoo.com
+Hostname: zem.outbrainimg.com, Size: 38429 bytes, Time: 0.073 sec
+Hostname: trk.vidible.tv, Size: 2968 bytes, Time: 0.063 sec
+Thread 5 Fds 87 No bytes after accepting (likely connection terminated by client)
+Hostname: stas.outbrain.com, Size: 6099 bytes, Time: 2.834 sec
+Thread 5 Fds 137 blocked from blacklisted domain mathid.mathtag.com
+Hostname: edgecast-cf-prod.yahoo.net, Size: 90012 bytes, Time: 0.060 sec
+Thread 5 Fds 138 blocked from blacklisted domain adservice.google.com.sg
+Thread 5 Fds 139 blocked from blacklisted domain adservice.google.com
+Hostname: stas.outbrain.com, Size: 6035 bytes, Time: 2.868 sec
+Hostname: tpc.googlesyndication.com, Size: 8971 bytes, Time: 2.007 sec
+Hostname: tpc.googlesyndication.com, Size: 13297 bytes, Time: 1.189 sec
+Thread 2 Fds 150 155 could not read data, closing
+(This might be expected) Thread 2 error code 104 error message: Connection reset by peer
+Hostname: encrypted-tbn0.gstatic.com, Size: 18658 bytes, Time: 0.094 sec
+Hostname: encrypted-tbn0.gstatic.com, Size: 18212 bytes, Time: 0.076 sec
+Thread 4 Fds 162 blocked from blacklisted domain adservice.google.com
+Hostname: ib.adnxs.com, Size: 6409 bytes, Time: 10.063 sec
+Hostname: edgecast-cf-prod.yahoo.net, Size: 49607 bytes, Time: 0.058 sec
+Thread 3 Fds 178 blocked from blacklisted domain www.google.com
+Hostname: edgecast-cf-prod.yahoo.net, Size: 111101 bytes, Time: 0.054 sec
+Hostname: b1sync.zemanta.com, Size: 9705 bytes, Time: 9.540 sec
+Hostname: vop-yahoo.secure.footprint.net, Size: 7103 bytes, Time: 0.675 sec
+Hostname: edgecast-cf-prod.yahoo.net, Size: 44184 bytes, Time: 0.080 sec
+Hostname: ads.pubmatic.com, Size: 12750 bytes, Time: 24.759 sec
+Hostname: b1-sindc1.zemanta.com, Size: 6088 bytes, Time: 30.038 sec
+Hostname: b1t-sindc1.zemanta.com, Size: 5976 bytes, Time: 30.048 sec
+Hostname: b1t-sindc1.zemanta.com, Size: 6147 bytes, Time: 30.038 sec
+Hostname: b1-sindc1.zemanta.com, Size: 2691 bytes, Time: 30.032 sec
+Thread 5 Fds 53 blocked from blacklisted domain service.idsync.analytics.yahoo.com
+Thread 4 Fds 68 blocked from blacklisted domain mathid.mathtag.com
+Thread 6 Fds 94 blocked from blacklisted domain adservice.google.com.sg
+Thread 6 Fds 94 blocked from blacklisted domain adservice.google.com
+Thread 5 Fds 94 blocked from blacklisted domain www.google.com
+Hostname: vop-yahoo.secure.footprint.net, Size: 949 bytes, Time: 30.982 sec
+Hostname: cdn.ampproject.org, Size: 17697 bytes, Time: 0.044 sec
+Hostname: cdn.ampproject.org, Size: 14336 bytes, Time: 0.037 sec
+Hostname: cdn.ampproject.org, Size: 22224 bytes, Time: 0.086 sec
+Hostname: cdn.ampproject.org, Size: 41634 bytes, Time: 0.086 sec
+Hostname: cdn.ampproject.org, Size: 16544 bytes, Time: 0.082 sec
+Hostname: csi.gstatic.com, Size: 7946 bytes, Time: 38.929 sec
+Hostname: dms-bqfizom6cbreport.wc.yahoodns.net, Size: 7821 bytes, Time: 38.003 sec
+Hostname: tag.sp.advertising.com, Size: 8680 bytes, Time: 53.675 sec
+Hostname: image6.pubmatic.com, Size: 6479 bytes, Time: 51.685 sec
+Hostname: bats.video.yahoo.com, Size: 67184 bytes, Time: 52.517 sec
+Hostname: fonts.gstatic.com, Size: 28405 bytes, Time: 45.071 sec
+Hostname: widgets.zemanta.com, Size: 9270 bytes, Time: 53.994 sec
+Hostname: ybar-mcdn-report.wc.yahoodns.net, Size: 9059 bytes, Time: 51.083 sec
+Hostname: dms-c8uxiedac6report.wc.yahoodns.net, Size: 7819 bytes, Time: 35.484 sec
+Hostname: ap-southeast-1-web-oao.ssp.yahoo.com, Size: 9140 bytes, Time: 53.654 sec
+Hostname: v-c1k57mu5nq.wc.yahoodns.net, Size: 7913 bytes, Time: 39.498 sec
+Hostname: geo.yahoo.com, Size: 22205 bytes, Time: 54.126 sec
+Hostname: tpc.googlesyndication.com, Size: 237615 bytes, Time: 47.271 sec
+Hostname: dms-bx7qohyc92report.wc.yahoodns.net, Size: 7820 bytes, Time: 35.485 sec
+Hostname: video.adaptv.advertising.com, Size: 8410 bytes, Time: 52.390 sec
+Hostname: www.gstatic.com, Size: 18484 bytes, Time: 46.991 sec
+Hostname: encrypted-tbn1.gstatic.com, Size: 27536 bytes, Time: 45.518 sec
+Hostname: opus.analytics.yahoo.com, Size: 14779 bytes, Time: 54.129 sec
+Hostname: ybar-aydk2uh9nxreport.wc.yahoodns.net, Size: 7856 bytes, Time: 50.943 sec
+Hostname: simage4.pubmatic.com, Size: 7455 bytes, Time: 49.272 sec
+Hostname: video-api.yql.yahoo.com, Size: 34905 bytes, Time: 52.145 sec
+Hostname: cerebro.edna.yahoo.net, Size: 8094 bytes, Time: 53.199 sec
+Hostname: partner.googleadservices.com, Size: 8210 bytes, Time: 48.218 sec
+Hostname: encrypted-tbn2.gstatic.com, Size: 30888 bytes, Time: 45.489 sec
+Hostname: assets.video.yahoo.net, Size: 41732 bytes, Time: 52.390 sec
+Hostname: prod-m-node-2111.ssp.advertising.com, Size: 9069 bytes, Time: 54.034 sec
+Hostname: pubads.g.doubleclick.net, Size: 8824 bytes, Time: 42.132 sec
+Hostname: beap-bc.yahoo.com, Size: 9100 bytes, Time: 9.347 sec
+Hostname: sg3.beap.gemini.yahoo.com, Size: 7647 bytes, Time: 52.011 sec
+Hostname: v-aydk2uh9nx.wc.yahoodns.net, Size: 7628 bytes, Time: 53.503 sec
+Hostname: v-arnaeptvvl.wc.yahoodns.net, Size: 7628 bytes, Time: 40.483 sec
+Hostname: dms-arnaeptvvlreport.wc.yahoodns.net, Size: 7821 bytes, Time: 35.485 sec
+Hostname: imasdk.googleapis.com, Size: 350545 bytes, Time: 45.107 sec
+Hostname: encrypted-tbn0.gstatic.com, Size: 23428 bytes, Time: 45.653 sec
+Hostname: dms-mcdn-report.wc.yahoodns.net, Size: 10048 bytes, Time: 38.007 sec
+Hostname: sb.scorecardresearch.com, Size: 8775 bytes, Time: 51.402 sec
+Hostname: googleads.g.doubleclick.net, Size: 53671 bytes, Time: 48.311 sec
+Hostname: 12.at.atwola.com, Size: 13038 bytes, Time: 54.349 sec
+Hostname: aka-cdn.adtechus.com, Size: 6707 bytes, Time: 54.698 sec
+Hostname: cdn.ampproject.org, Size: 71757 bytes, Time: 8.869 sec
+Hostname: v-b4bds3cgpc.wc.yahoodns.net, Size: 7627 bytes, Time: 53.478 sec
+Hostname: ybar-c3tdqe537lreport.wc.yahoodns.net, Size: 7858 bytes, Time: 50.900 sec
+Hostname: edge-mcdn.secure.yahoo.com, Size: 19707 bytes, Time: 54.566 sec
+Hostname: zem.outbrainimg.com, Size: 13027 bytes, Time: 52.092 sec
+Hostname: pr-bh.ybp.yahoo.com, Size: 8387 bytes, Time: 53.656 sec
+Hostname: securepubads.g.doubleclick.net, Size: 29546 bytes, Time: 40.498 sec
+Hostname: v-c8uxiedac6.wc.yahoodns.net, Size: 7911 bytes, Time: 40.258 sec
+Hostname: ybar-b4bds3cgpcreport.wc.yahoodns.net, Size: 7857 bytes, Time: 50.951 sec
+Hostname: www.yahoo.com, Size: 36750 bytes, Time: 54.853 sec
+Hostname: d1vl8wytztdz.cloudfront.net, Size: 8959 bytes, Time: 53.205 sec
+Hostname: v-aptltqtxnp.wc.yahoodns.net, Size: 7627 bytes, Time: 39.596 sec
+Hostname: v-c3tdqe537l.wc.yahoodns.net, Size: 7913 bytes, Time: 53.382 sec
+Hostname: ad.doubleclick.net, Size: 7645 bytes, Time: 47.642 sec
+Hostname: v-bqfizom6cb.wc.yahoodns.net, Size: 7627 bytes, Time: 39.531 sec
+Hostname: dms-c1k57mu5nqreport.wc.yahoodns.net, Size: 7821 bytes, Time: 38.007 sec
+Hostname: yep.video.yahoo.com, Size: 387198 bytes, Time: 54.481 sec
+Hostname: fonts.googleapis.com, Size: 8486 bytes, Time: 47.313 sec
+Hostname: www.googletagservices.com, Size: 46096 bytes, Time: 47.179 sec
+Hostname: v-bx7qohyc92.wc.yahoodns.net, Size: 7627 bytes, Time: 40.458 sec
+Hostname: pagead2.googlesyndication.com, Size: 397627 bytes, Time: 51.095 sec
+Hostname: dns-5xvao9ded.sombrero.yahoo.net, Size: 7923 bytes, Time: 40.193 sec
+Hostname: encrypted-tbn3.gstatic.com, Size: 26436 bytes, Time: 45.665 sec
+Hostname: trk.vidible.tv, Size: 19399 bytes, Time: 50.565 sec
+Hostname: edge-mcdn.secure.yahoo.com, Size: 13559 bytes, Time: 55.175 sec
+Hostname: dms-aptltqtxnpreport.wc.yahoodns.net, Size: 7821 bytes, Time: 38.008 sec
+Hostname: cdn.js7k.com, Size: 167138 bytes, Time: 53.832 sec
+Hostname: incoming.telemetry.mozilla.org, Size: 6053 bytes, Time: 55.143 sec
+Hostname: dns-7axlq7hhl.sombrero.yahoo.net, Size: 7925 bytes, Time: 39.383 sec
+Hostname: s0.2mdn.net, Size: 24628 bytes, Time: 42.232 sec
+Hostname: ads.pubmatic.com, Size: 8985 bytes, Time: 9.862 sec
+Hostname: udc.yahoo.com, Size: 9249 bytes, Time: 54.087 sec
+Hostname: incoming.telemetry.mozilla.org, Size: 5504 bytes, Time: 54.762 sec
+Hostname: s.yimg.com, Size: 925241 bytes, Time: 55.283 sec
+Hostname: dns-92yo7wcf.sombrero.yahoo.net, Size: 7921 bytes, Time: 53.260 sec
+Hostname: edgecast-vod.yahoo.net, Size: 7013 bytes, Time: 39.043 sec
+Hostname: yahoovod.hs.llnwd.net, Size: 9154 bytes, Time: 39.344 sec
+Hostname: vop-yahoo.akamaized.net, Size: 2790 bytes, Time: 39.002 sec
+Hostname: edgecast-cf-prod.yahoo.net, Size: 7581010 bytes, Time: 50.420 sec
+Hostname: token.rubiconproject.com, Size: 5499 bytes, Time: 51.326 sec
+Hostname: yahoovod.hs.llnwd.net, Size: 10238 bytes, Time: 53.198 sec
+Hostname: ads.adaptv.advertising.com, Size: 14080 bytes, Time: 50.026 sec
+Hostname: edgecast-vod.yahoo.net, Size: 8194 bytes, Time: 52.747 sec
+Hostname: eus.rubiconproject.com, Size: 16646 bytes, Time: 52.045 sec
+Hostname: beacon-sin1.rubiconproject.com, Size: 5703 bytes, Time: 51.349 sec
+Hostname: vop-yahoo.akamaized.net, Size: 8148 bytes, Time: 52.747 sec
+Hostname: content-signature-2.cdn.mozilla.net, Size: 11031 bytes, Time: 55.449 sec
+Hostname: firefox.settings.services.mozilla.com, Size: 6441 bytes, Time: 55.117 sec
+Hostname: sg.yahoo.com, Size: 302062 bytes, Time: 55.480 sec
+Hostname: firefox.settings.services.mozilla.com, Size: 7483 bytes, Time: 55.486 sec
+Hostname: contile.services.mozilla.com, Size: 6774 bytes, Time: 55.491 sec
+Hostname: push.services.mozilla.com, Size: 5465 bytes, Time: 55.173 sec
