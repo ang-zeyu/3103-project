@@ -2,8 +2,8 @@
 
 ## Group Members
 
-- Ang Ze Yu (A0187094U)
-- Choo Xing Yu ()
+-   Ang Ze Yu (A0187094U)
+-   Choo Xing Yu (A0202132E)
 
 ## Compiling the Proxy
 
@@ -25,7 +25,6 @@ OpenMP is a multithreading library which's usage is discussed in our document wr
 ## Running the Proxy
 
 Simply run the command specified in the assignment pdf.
-
 
 ```
 ./proxy <port> <flag_telemetry> <filename of blacklist>
