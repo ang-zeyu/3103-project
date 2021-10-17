@@ -20,6 +20,7 @@ This script uses the `g++` command which we have verified to be available on `xc
 It also uses the `-O2` optimization flag.
 
 Lastly, `-fopenmp` flag (verified to be working on `xcne` machines as well) is specified to allow us to use the **multithreading library** OpenMP.
+OpenMP is a multithreading library which's usage is discussed in our document writeup.
 
 ## Running the Proxy
 
