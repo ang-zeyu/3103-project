@@ -41,8 +41,8 @@ char SSL_GREETING_HEADER[] = {
     '\r', '\n', '\r', '\n'
 };
 
-const int BUFFER_SIZE = 16384;
-char buffers[8][16384];
+const int BUFFER_SIZE = 98304;
+char buffers[8][98304];
 
 struct StreamInfo {
     timeval start_time;
@@ -105,7 +105,7 @@ void handle_errno()
     int thread_num = omp_get_thread_num();
     if (errno)
     {
-        printf("(This might be expected) Thread %d error code %d error message: %s\n", thread_num, errno, strerror(errno));
+        printf("(This might be expected, espescially 'Connection reset by peer') Thread %d error code %d error message: %s\n", thread_num, errno, strerror(errno));
     }
 #ifdef DEBUG_MESSAGES
     else
@@ -193,7 +193,7 @@ int forward(int fd_from, int fd_to, int client_fd, int thread_num)
     int bytes_read = read(fd_from, buffers[thread_num], BUFFER_SIZE);
     if (bytes_read == -1)
     {
-        printf("Thread %d Fds %d %d could not read data, closing\n", thread_num, fd_from, fd_to);
+        printf("Thread %d Fds %d %d could not read data, closing. Caused by connection reset by client / dest.\n", thread_num, fd_from, fd_to);
         cleanup_client_error(client_fd);
         return 1;
     }
@@ -260,7 +260,7 @@ void forward_socket_pair(int fd_one, int fd_two, int client_fd, int thread_num)
 
     while (1)
     {
-        int epoll_result = epoll_wait(THREAD_DUPLEX_FDS[thread_num], waited_events, 2, 300);
+        int epoll_result = epoll_wait(THREAD_DUPLEX_FDS[thread_num], waited_events, 2, 100);
         if (epoll_result == -1)
         {
             printf("Thread %d Fds %d %d failed to multiplex\n", thread_num, fd_one, fd_two);
