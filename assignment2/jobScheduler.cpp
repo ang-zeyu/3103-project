@@ -15,6 +15,86 @@ using namespace std;
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <map>
+
+#define INITAL_CAPACITY -1
+
+class ServerInfo {
+    public:
+        int server_capacity;
+        int queue_wait_time;
+};
+
+// --------------------------------------------------------------------------------------------------------
+// global variables
+int has_found_all_server_capacities = 0;
+map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
+map<string, vector<string>> server_queues; // Map<ServerName, ServerQueue>
+map<string, time_t> request_start_time_map; // Map<RequestFileName, StartTime>
+// --------------------------------------------------------------------------------------------------------
+
+// ------------------------------------------------------------------------------------------------------------------------------
+// our methods
+
+void initServerCapacitiesMap(vector<string> server_names) {
+    for (int i = 0; i < server_names.size(); i++) {
+        string servername = server_names[i];
+        ServerInfo si;
+        si.queue_wait_time = 0;
+        si.server_capacity = INITAL_CAPACITY;
+        server_info_map[servername] = si;
+    }
+}
+
+int isValidRequestSize(int request_size) {
+    return request_size != -1;
+}
+
+// returns empty string if there's no server with unknown capacity
+string getFirstUnknownCapacityServer(vector<string> server_names) {
+    for (int i = 0; i < server_names.size(); i++) {
+        string server_name = server_names[i];
+        ServerInfo server_info = server_info_map[server_name];
+        if (server_info.server_capacity == INITAL_CAPACITY) {
+            // found unknown server capacity
+            return server_name;
+        }
+    }
+    // unknown server
+    return "";
+}
+
+string handleValidRequestSizeAllocation(vector<string> server_names, string request_name) {
+    if (has_found_all_server_capacities) {
+
+    } else {
+        // there exists a server capacity we do not know of
+        string server_name = getFirstUnknownCapacityServer(server_names);
+
+        if (server_name.empty()) {
+            throw "There's no server with unknown capacity!!";
+        }
+
+        // use current request to gauge server's processing capacity
+        request_start_time_map[request_name] = time(0); // set request's start time
+    }
+}
+
+string handleInvalidRequestSizeAllocation(vector<string> server_names, string request_name, int request_size) {
+    // TODO
+    return server_names[0];
+}
+
+string allocateToServer(vector<string> server_names, string request_name, int request_size) {
+    if (isValidRequestSize(request_size)) {
+        return handleValidRequestSizeAllocation(server_names, request_name);
+    } else {
+        // placeholder first
+        return handleInvalidRequestSizeAllocation(server_names, request_name, request_size);
+    }
+}
+
+// ------------------------------------------------------------------------------------------------------------------------------
 
 // KeyboardInterrupt handler
 void signalHandler(int signum) {
@@ -101,17 +181,12 @@ string assignServerToRequest(vector<string> servernames, string request) {
     string request_name = parser_filename(request);
     int request_size = parser_jobsize(request);
 
-    /** 
-     *  Logic of scheduling using jobsize
-     *  if request size is -1, it is unknown.
-     */
+    if (server_info_map.empty()) {
+        // init server
+        initServerCapacitiesMap(servernames);
+    }
 
-    /* Example. always assign to the first server */
-    string server_to_send = servernames[0];
-
-    /**************************************************/
-
-    /* Schedule the job */
+    string server_to_send = allocateToServer(servernames, request_name, request_size);
     string scheduled_request = scheduleJobToServer(server_to_send, request);
     return scheduled_request;
 }
