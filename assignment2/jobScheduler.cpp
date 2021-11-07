@@ -21,38 +21,77 @@ using namespace std;
 
 class ServerInfo {
     public:
-        int server_capacity;
-        int queue_wait_time;
+        double server_capacity;
+        time_t queue_total_wait_time;
 };
 
 // --------------------------------------------------------------------------------------------------------
 // global variables
-int has_found_all_server_capacities = 0;
+int server_capacities_found = 0;
 map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
-map<string, vector<string>> server_queues; // Map<ServerName, ServerQueue>
 map<string, time_t> request_start_time_map; // Map<RequestFileName, StartTime>
+map<string, int> job_size_map; // Map<RequestFileName, requestSize>
+map<string, string> job_to_server_allocation_map; // Map<RequestFileName, ServerName>
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
 // our methods
 
-void initServerCapacitiesMap(vector<string> server_names) {
-    for (int i = 0; i < server_names.size(); i++) {
-        string servername = server_names[i];
+void initalizeMetadata(vector<string> server_names) {
+    for (size_t i = 0; i < server_names.size(); i++) {
+        string server_name = server_names[i];
+
+        // ----------------------------------------------------
+        // server_info_map
         ServerInfo si;
-        si.queue_wait_time = 0;
+        si.queue_total_wait_time = 0;
         si.server_capacity = INITAL_CAPACITY;
-        server_info_map[servername] = si;
+        server_info_map[server_name] = si;
+        // ----------------------------------------------------
     }
+}
+
+int hasBeenInitialized() {
+    return !server_info_map.empty();
 }
 
 int isValidRequestSize(int request_size) {
     return request_size != -1;
 }
 
+int hasPendingUpdates(string server_name) {
+    return server_info_map[server_name].server_capacity == INITAL_CAPACITY;
+}
+
+int hasFoundAllServerCapacities(int num_servers) {
+    return server_capacities_found >= num_servers;
+}
+
+void updateServerInfo(string file_name) {
+    int has_metadata = request_start_time_map.count(file_name);
+    if (has_metadata) {
+        time_t duration = time(0) - request_start_time_map[file_name];
+        int size = job_size_map[file_name];
+        double capacity = size / duration;
+
+        string assigned_server = job_to_server_allocation_map[file_name];
+
+        if (hasPendingUpdates(assigned_server)) {
+            server_info_map[assigned_server].server_capacity = capacity; // update server capacity
+            server_capacities_found += 1;
+        } else {
+            // already have server's capacity
+            // update wait time
+            double server_capacity = server_info_map[assigned_server].server_capacity;
+            time_t process_time = job_size_map[file_name] / server_capacity;
+            server_info_map[assigned_server].queue_total_wait_time -= process_time;
+        }
+    }
+}
+
 // returns empty string if there's no server with unknown capacity
 string getFirstUnknownCapacityServer(vector<string> server_names) {
-    for (int i = 0; i < server_names.size(); i++) {
+    for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
         ServerInfo server_info = server_info_map[server_name];
         if (server_info.server_capacity == INITAL_CAPACITY) {
@@ -64,9 +103,50 @@ string getFirstUnknownCapacityServer(vector<string> server_names) {
     return "";
 }
 
-string handleValidRequestSizeAllocation(vector<string> server_names, string request_name) {
-    if (has_found_all_server_capacities) {
+void insertMetadataBeforeSend(string server_name, string file_name, int request_size) {
+    request_start_time_map[file_name] = time(0); // set request's start time
+    job_size_map[file_name] = request_size;
+    job_to_server_allocation_map[file_name] = server_name;
+}
 
+string getMinimumResponseTimeServer(vector<string> server_names, string file_name, int request_size) {
+    string min_response_time_server_name;
+    time_t min_response_time = -1;
+    time_t process_time;
+    for (size_t i = 0; i < server_names.size(); i++) {
+        string server_name = server_names[i];
+        ServerInfo si = server_info_map[server_name];
+
+        double server_capacity = si.server_capacity;
+
+        time_t queue_total_wait_time = si.queue_total_wait_time;
+        time_t process_time_needed = request_size / server_capacity;
+
+        time_t response_time = queue_total_wait_time + process_time_needed;
+        if (response_time < min_response_time) {
+            min_response_time_server_name = server_name;
+            min_response_time = response_time;
+            process_time = process_time_needed;
+        }
+    }
+
+    // update stats
+    server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update process time
+    insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
+
+    return min_response_time_server_name;
+}
+
+string handleValidRequestSizeAllocation(vector<string> server_names, string file_name, int request_size) {
+    if (hasFoundAllServerCapacities(server_names.size())) {
+        // now with all server capacities, we will distribute based on a heuristic
+        // this heuristic calculates the effective response time from server
+        // response time is a sum of:
+        // 1) total wait time from jobs in queue
+        // 2) how much time the server takes to process "this" job
+        // then we select the server with the minimum heuristic
+
+        return getMinimumResponseTimeServer(server_names, file_name, request_size);
     } else {
         // there exists a server capacity we do not know of
         string server_name = getFirstUnknownCapacityServer(server_names);
@@ -76,21 +156,22 @@ string handleValidRequestSizeAllocation(vector<string> server_names, string requ
         }
 
         // use current request to gauge server's processing capacity
-        request_start_time_map[request_name] = time(0); // set request's start time
+        insertMetadataBeforeSend(server_name, file_name, request_size);
+        return server_name; // send to server
     }
 }
 
-string handleInvalidRequestSizeAllocation(vector<string> server_names, string request_name, int request_size) {
+string handleInvalidRequestSizeAllocation(vector<string> server_names, string file_name) {
     // TODO
     return server_names[0];
 }
 
-string allocateToServer(vector<string> server_names, string request_name, int request_size) {
+string allocateToServer(vector<string> server_names, string file_name, int request_size) {
     if (isValidRequestSize(request_size)) {
-        return handleValidRequestSizeAllocation(server_names, request_name);
+        return handleValidRequestSizeAllocation(server_names, file_name, request_size);
     } else {
         // placeholder first
-        return handleInvalidRequestSizeAllocation(server_names, request_name, request_size);
+        return handleInvalidRequestSizeAllocation(server_names, file_name);
     }
 }
 
@@ -146,7 +227,7 @@ void getCompletedFilename(string filename) {
 
     /* In this example. just print message */
     printf("[JobScheduler] Filename %s is finished.\n", filename.c_str());
-
+    updateServerInfo(filename);
     
     /**************************************************/
 }
@@ -178,15 +259,15 @@ string assignServerToRequest(vector<string> servernames, string request) {
      * You can use a global variables or add more       *
      * arguments.                                       */
 
-    string request_name = parser_filename(request);
+    string file_name = parser_filename(request);
     int request_size = parser_jobsize(request);
 
-    if (server_info_map.empty()) {
+    if (!hasBeenInitialized()) {
         // init server
-        initServerCapacitiesMap(servernames);
+        initalizeMetadata(servernames);
     }
 
-    string server_to_send = allocateToServer(servernames, request_name, request_size);
+    string server_to_send = allocateToServer(servernames, file_name, request_size);
     string scheduled_request = scheduleJobToServer(server_to_send, request);
     return scheduled_request;
 }
