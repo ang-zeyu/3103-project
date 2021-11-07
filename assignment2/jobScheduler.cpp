@@ -35,7 +35,7 @@ map<string, string> job_to_server_allocation_map; // Map<RequestFileName, Server
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
-// our methods
+// helper methods
 
 void initalizeMetadata(vector<string> server_names) {
     for (size_t i = 0; i < server_names.size(); i++) {
