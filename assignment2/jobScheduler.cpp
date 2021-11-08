@@ -6,7 +6,7 @@ using namespace std;
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
-
+#include <sys/time.h>
 #include <bitset>
 #include <chrono>
 #include <csignal>
@@ -29,7 +29,7 @@ class ServerInfo {
 // --------------------------------------------------------------------------------------------------------
 // global variables
 map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
-map<string, double> request_start_time_map; // Map<RequestFileName, StartTime>
+map<string, time_t> request_start_time_map; // Map<RequestFileName, StartTime>
 map<string, int> job_size_map; // Map<RequestFileName, requestSize>
 map<string, string> job_to_server_allocation_map; // Map<RequestFileName, ServerName>
 set<string> queried_servers; // Set<ServerName>
@@ -37,16 +37,22 @@ set<string> queried_servers; // Set<ServerName>
 size_t SERVER_COUNT = 0;
 
 int has_all_server_capacities = 0;
-int has_sent_capacity_query_packet_to_all_servers = 0;
 
-size_t query_packet_sent_count = 0;
 size_t query_packet_ack_count = 0;
 
 size_t fifo_index = 0;
+
+double PRORATED_SERVER_CAPACITY_PERCENTAGE = 0.2;
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
 // helper methods
+
+time_t getNowInMilliseconds() {
+    struct timeval time_now{};
+    gettimeofday(&time_now, nullptr);
+    return (time_now.tv_sec * 1000) + (time_now.tv_usec / 1000);
+}
 
 void printAllServerInfo() {
     for (auto const& p : server_info_map) {
@@ -81,27 +87,34 @@ int hasSentCapacityQueryPacket(string server_name) {
     return queried_servers.count(server_name);
 }
 
+void updateServerCapacities(string file_name) {
+    string assigned_server = job_to_server_allocation_map[file_name];
+    time_t duration = getNowInMilliseconds() - request_start_time_map[file_name];
+    int size = job_size_map[file_name];
+    
+    double duration_in_seconds = ((double) duration) / 1000;
+    double capacity = size / duration_in_seconds;
+
+    if (server_info_map[assigned_server].server_capacity == INITAL_CAPACITY) {
+        // if server capacity has not been found yet
+        server_info_map[assigned_server].server_capacity = capacity; // update server capacity
+        query_packet_ack_count++;
+        if (query_packet_ack_count == SERVER_COUNT) {
+            has_all_server_capacities = 1;
+        }
+    } else {
+        // already have server's capacity
+        double server_capacity = server_info_map[assigned_server].server_capacity;
+        double process_time = size / server_capacity;
+        server_info_map[assigned_server].queue_total_wait_time -= process_time;
+    }
+    printAllServerInfo();
+}
+
 void updateServerInfo(string file_name) {
     int has_metadata = request_start_time_map.count(file_name);
     if (has_metadata) {
-        double duration = time(0) - request_start_time_map[file_name];
-        int size = job_size_map[file_name];
-        cout << "duration: " << duration << " size: " << size << endl;
-        string assigned_server = job_to_server_allocation_map[file_name];
-
-        if (hasSentCapacityQueryPacket(assigned_server)) { // if it has been queried before
-            server_info_map[assigned_server].server_capacity = size / duration; // update server capacity
-            query_packet_ack_count++;
-            if (query_packet_ack_count == SERVER_COUNT) {
-                has_all_server_capacities = 1;
-            }
-        } else {
-            // already have server's capacity
-            // update wait time
-            double server_capacity = server_info_map[assigned_server].server_capacity;
-            double process_time = size / server_capacity;
-            server_info_map[assigned_server].queue_total_wait_time -= process_time;
-        }
+        updateServerCapacities(file_name);
     }
 }
 
@@ -113,10 +126,6 @@ string getFirstUnqueriedCapacityServer(vector<string> server_names) {
             // found unknown server capacity
             // as it has not been queried yet
             queried_servers.insert(server_name);
-            query_packet_sent_count++;
-            if (query_packet_sent_count == SERVER_COUNT) { // sent to all server
-                has_sent_capacity_query_packet_to_all_servers = 1; // set to true
-            }
             return server_name;
         }
     }
@@ -125,7 +134,7 @@ string getFirstUnqueriedCapacityServer(vector<string> server_names) {
 }
 
 void insertMetadataBeforeSend(string server_name, string file_name, int request_size) {
-    request_start_time_map[file_name] = time(0); // set request's start time
+    request_start_time_map[file_name] = getNowInMilliseconds(); // set request's start time
     job_size_map[file_name] = request_size;
     job_to_server_allocation_map[file_name] = server_name;
 }
@@ -137,14 +146,19 @@ string fifoQueue(vector<string> server_names) {
     return server_name;
 }
 
+// this function tries to find the server with the minimum effective response time
+// Effective response time is a sum of:
+// 1) total wait time from jobs in queue
+// 2) how much time the server takes to process "this" job
+// However if we cannot find a valid server, in the event where we
+// do not know of any server's capacity, it'll default to FIFO
 string getMinimumResponseTimeServer(vector<string> server_names, string file_name, int request_size) {
-    string min_response_time_server_name;
-    double min_response_time = -1;
+    string min_response_time_server_name = "";
+    double min_response_time = __DBL_MAX__;
     double process_time;
     for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
         ServerInfo si = server_info_map[server_name];
-
         int is_valid_server = si.server_capacity != INITAL_CAPACITY;
         if (is_valid_server) {
             double server_capacity = si.server_capacity;
@@ -161,45 +175,31 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         }
     }
 
-    int has_found_min_server = min_response_time != -1;
-    if (has_found_min_server) {
-        // update stats
-        server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update process time
-        insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
+    // update stats
+    server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update process time
+    insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
 
+    if (!min_response_time_server_name.empty()) {
         return min_response_time_server_name;
     } else {
-        // hasn't found
         return fifoQueue(server_names);
     }
 }
 
 string handleValidRequestSizeAllocation(vector<string> server_names, string file_name, int request_size) {
-    if (has_all_server_capacities) {
-        // now with all server capacities, we will distribute based on a heuristic
-        // this heuristic calculates the effective response time from server
-        // response time is a sum of:
-        // 1) total wait time from jobs in queue
-        // 2) how much time the server takes to process "this" job
-        // then we select the server with the minimum heuristic
-        return getMinimumResponseTimeServer(server_names, file_name, request_size);
+    string server_name = getFirstUnqueriedCapacityServer(server_names);
+    if (!server_name.empty()) {
+        // use current request to gauge server's processing capacity
+        insertMetadataBeforeSend(server_name, file_name, request_size);
+        return server_name; // send to server
     } else {
-        // there exists a server capacity we do not know of
-        string server_name = getFirstUnqueriedCapacityServer(server_names);
-        if (!server_name.empty()) {
-            // use current request to gauge server's processing capacity
-            insertMetadataBeforeSend(server_name, file_name, request_size);
-            return server_name; // send to server
-        } else {
-            // all servers were queried
-            return getMinimumResponseTimeServer(server_names, file_name, request_size);
-        }
+        return getMinimumResponseTimeServer(server_names, file_name, request_size);
     }
 }
 
 string handleInvalidRequestSizeAllocation(vector<string> server_names, string file_name) {
     // TODO
-    return server_names[0];
+    return fifoQueue(server_names);
 }
 
 string allocateToServer(vector<string> server_names, string file_name, int request_size) {
@@ -303,8 +303,8 @@ string assignServerToRequest(vector<string> servernames, string request) {
         initalizeMetadata(servernames);
     }
 
-    // string server_to_send = allocateToServer(servernames, file_name, request_size);
-    string server_to_send = fifoQueue(servernames);
+    string server_to_send = allocateToServer(servernames, file_name, request_size);
+    // string server_to_send = fifoQueue(servernames);
 
     string scheduled_request = scheduleJobToServer(server_to_send, request);
     return scheduled_request;
@@ -394,11 +394,11 @@ int main(int argc, char const* argv[]) {
             cerr << e.what() << '\n';
         }
 
-        // // Example printAll API : let servers print status in every seconds
-        // if (chrono::duration_cast<chrono::seconds>(chrono::system_clock::now() - now).count() > currSeconds) {
-        //     currSeconds = currSeconds + 1;
-        //     sendPrintAll(serverSocket);
-        // }
+        // Example printAll API : let servers print status in every seconds
+        if (chrono::duration_cast<chrono::seconds>(chrono::system_clock::now() - now).count() > currSeconds) {
+            currSeconds = currSeconds + 1;
+            sendPrintAll(serverSocket);
+        }
     }
     return 0;
 }
