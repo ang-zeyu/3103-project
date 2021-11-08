@@ -17,6 +17,7 @@ using namespace std;
 #include <vector>
 #include <map>
 #include <set>
+#include <random>
 
 #define INITAL_CAPACITY -1
 
@@ -82,7 +83,15 @@ int hasSentCapacityQueryPacket(string server_name) {
     return queried_servers.count(server_name);
 }
 
+int hasMetadata(string file_name) {
+    return job_to_server_allocation_map.count(file_name) > 0 && request_start_time_map.count(file_name) > 0 && job_size_map.count(file_name) > 0;
+}
+
 void updateServerCapacities(string file_name) {
+    if (!hasMetadata(file_name)) {
+        return;
+    }
+
     string assigned_server = job_to_server_allocation_map[file_name];
     time_t duration = getNowInMilliseconds() - request_start_time_map[file_name];
     int size = job_size_map[file_name];
@@ -97,6 +106,7 @@ void updateServerCapacities(string file_name) {
         // already have server's capacity
         double process_time = job_to_process_time[file_name];
         server_info_map[assigned_server].queue_total_wait_time -= process_time;
+        cout << "DEDUCTED " << process_time << " FROM SERVER: " << assigned_server << endl;
     }
     printAllServerInfo();
 }
@@ -108,7 +118,7 @@ void updateServerInfo(string file_name) {
     }
 }
 
-// returns empty string if there's no server with unknown capacity
+// returns empty string if there's no server unqueried
 string getFirstUnqueriedCapacityServer(vector<string> server_names) {
     for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
@@ -129,11 +139,26 @@ void insertMetadataBeforeSend(string server_name, string file_name, int request_
     job_to_server_allocation_map[file_name] = server_name;
 }
 
-string fifoQueue(vector<string> server_names) {
+string fifoAllocation(vector<string> server_names) {
     string server_name = server_names[fifo_index];
     fifo_index++;
     fifo_index = fifo_index % SERVER_COUNT;
+    cout << "FIFO ALLOCATED: " << server_name << endl;
     return server_name;
+}
+
+string randomAllocation(vector<string> server_names) {
+    const int range_from = 0;
+    const int range_to = server_names.size() - 1;
+
+    std::random_device rd;
+    std::default_random_engine eng(rd());
+    std::uniform_int_distribution<int> distr(range_from, range_to);
+
+    int randomIndex = distr(eng);
+    cout << "RANDOMLY ALLOCATED: " << server_names[randomIndex] << endl;
+
+    return server_names[randomIndex];
 }
 
 // this function tries to find the server with the minimum effective response time
@@ -169,10 +194,12 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         // update stats
         job_to_process_time[file_name] = process_time; // insert process time so we can subtract from queue wait time when recv
         server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update queue wait time
+
         insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
         return min_response_time_server_name;
     } else {
-        return fifoQueue(server_names);
+        return fifoAllocation(server_names);
+        // return randomAllocation(server_names);
     }
 }
 
@@ -181,7 +208,7 @@ string handleValidRequestSizeAllocation(vector<string> server_names, string file
     if (!server_name.empty()) {
         // use current request to gauge server's processing capacity
         insertMetadataBeforeSend(server_name, file_name, request_size);
-        return server_name; // send to server
+        return server_name;
     } else {
         return getMinimumResponseTimeServer(server_names, file_name, request_size);
     }
@@ -189,14 +216,13 @@ string handleValidRequestSizeAllocation(vector<string> server_names, string file
 
 string handleInvalidRequestSizeAllocation(vector<string> server_names, string file_name) {
     // TODO
-    return fifoQueue(server_names);
+    return fifoAllocation(server_names);
 }
 
 string allocateToServer(vector<string> server_names, string file_name, int request_size) {
     if (isValidRequestSize(request_size)) {
         return handleValidRequestSizeAllocation(server_names, file_name, request_size);
     } else {
-        // placeholder first
         return handleInvalidRequestSizeAllocation(server_names, file_name);
     }
 }
@@ -294,7 +320,7 @@ string assignServerToRequest(vector<string> servernames, string request) {
     }
 
     string server_to_send = allocateToServer(servernames, file_name, request_size);
-    // string server_to_send = fifoQueue(servernames);
+    // string server_to_send = fifoAllocation(servernames);
 
     string scheduled_request = scheduleJobToServer(server_to_send, request);
     return scheduled_request;
