@@ -39,12 +39,14 @@ struct CompareServerCapacity {
 // --------------------------------------------------------------------------------------------------------
 // global variables
 map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
-map<string, time_t> request_start_time_map; // Map<RequestFileName, StartTime>
-map<string, int> job_size_map; // Map<RequestFileName, requestSize>
-map<string, string> job_to_server_allocation_map; // Map<RequestFileName, ServerName>
-map<string, double> job_to_process_time; // Map<RequestFileName, ProcessTimeRequired>
+map<string, time_t> request_start_time_map; // Map<FileName, StartTime>
+map<string, int> job_size_map; // Map<FileName, requestSize>
+map<string, string> job_to_server_allocation_map; // Map<FileName, ServerName>
+map<string, double> job_to_process_time; // Map<FileName, ProcessTimeRequired>
 priority_queue<ServerInfo, vector<ServerInfo>, CompareServerCapacity> server_info_pq; // Max PQ, meaning top() will return server with biggest capacity
 set<string> queried_servers; // Set<ServerName>
+set<string> capacity_query_packets; // Set<FileName>
+vector<string> accumulated_jobs;
 
 size_t SERVER_COUNT = 0;
 
@@ -94,23 +96,32 @@ int hasSentCapacityQueryPacket(string server_name) {
     return queried_servers.count(server_name);
 }
 
+int hasSentAllCapacityQueryPackets() {
+    return queried_servers.size() == SERVER_COUNT;
+}
+
 int hasMetadata(string file_name) {
     return job_to_server_allocation_map.count(file_name) > 0 && request_start_time_map.count(file_name) > 0 && job_size_map.count(file_name) > 0;
 }
 
 void updateServerInfo(string file_name) {
-    if (!hasMetadata(file_name)) {
+    int has_size = job_size_map.count(file_name);
+
+    if (!hasMetadata(file_name) || !has_size) {
         return;
     }
 
     string assigned_server = job_to_server_allocation_map[file_name];
     time_t duration = getNowInMilliseconds() - request_start_time_map[file_name];
+
     int size = job_size_map[file_name];
     
     double duration_in_seconds = ((double) duration) / 1000;
     double capacity = size / duration_in_seconds;
 
-    if (server_info_map[assigned_server].server_capacity == INITAL_CAPACITY) {
+    int is_capacity_query_packet = capacity_query_packets.count(file_name);
+
+    if (is_capacity_query_packet) {
         // if server capacity has not been found yet
         server_info_map[assigned_server].server_capacity = capacity; // update server capacity
         server_info_pq.push(server_info_map[assigned_server]); // got all the info we need
@@ -126,13 +137,14 @@ void updateServerInfo(string file_name) {
 }
 
 // returns empty string if there's no server unqueried
-string getFirstUnqueriedCapacityServer(vector<string> server_names) {
+string getFirstUnqueriedCapacityServer(vector<string> server_names, string file_name) {
     for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
         if (!hasSentCapacityQueryPacket(server_name)) {
             // found unknown server capacity
             // as it has not been queried yet
             queried_servers.insert(server_name);
+            capacity_query_packets.insert(file_name);
             return server_name;
         }
     }
@@ -225,6 +237,8 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
         return min_response_time_server_name;
     } else {
+        // that means we don't know any server's capacity
+
         // return fifoAllocation(server_names);
         // return randomAllocation(server_names);
         return topKnownServerCapacityAllocation(server_names);
@@ -232,10 +246,15 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
 }
 
 string handleValidRequestSizeAllocation(vector<string> server_names, string file_name, int request_size) {
-    string server_name = getFirstUnqueriedCapacityServer(server_names);
+    string server_name = getFirstUnqueriedCapacityServer(server_names, file_name);
     if (!server_name.empty()) {
         // use current request to gauge server's processing capacity
         insertMetadataBeforeSend(server_name, file_name, request_size);
+
+        #ifdef DEBUG
+        cout << "QUERYING SERVER: " << server_name << endl;
+        #endif
+
         return server_name;
     } else {
         return getMinimumResponseTimeServer(server_names, file_name, request_size);
@@ -352,8 +371,13 @@ string assignServerToRequest(vector<string> servernames, string request) {
     string server_to_send = allocateToServer(servernames, file_name, request_size);
     // string server_to_send = fifoAllocation(servernames);
 
-    string scheduled_request = scheduleJobToServer(server_to_send, request);
-    return scheduled_request;
+    if (!server_to_send.empty()) {
+        string scheduled_request = scheduleJobToServer(server_to_send, request);
+        return scheduled_request;
+    } else {
+        // dont send
+        return "";
+    }
 }
 
 void parseThenSendRequest(char* buffer, int len, const int& serverSocket, vector<string> servernames) {
