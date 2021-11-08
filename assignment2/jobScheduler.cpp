@@ -18,13 +18,22 @@ using namespace std;
 #include <map>
 #include <set>
 #include <random>
+#include <queue>
 
+#define DEBUG 1
 #define INITAL_CAPACITY -1
 
 class ServerInfo {
     public:
+        string server_name;
         double server_capacity;
         double queue_total_wait_time;
+};
+
+struct CompareServerCapacity {
+    bool operator()(ServerInfo const &s1, ServerInfo const& s2) {
+        return s1.server_capacity < s2.server_capacity;
+    }
 };
 
 // --------------------------------------------------------------------------------------------------------
@@ -34,6 +43,7 @@ map<string, time_t> request_start_time_map; // Map<RequestFileName, StartTime>
 map<string, int> job_size_map; // Map<RequestFileName, requestSize>
 map<string, string> job_to_server_allocation_map; // Map<RequestFileName, ServerName>
 map<string, double> job_to_process_time; // Map<RequestFileName, ProcessTimeRequired>
+priority_queue<ServerInfo, vector<ServerInfo>, CompareServerCapacity> server_info_pq; // Max PQ, meaning top() will return server with biggest capacity
 set<string> queried_servers; // Set<ServerName>
 
 size_t SERVER_COUNT = 0;
@@ -64,6 +74,7 @@ void initalizeMetadata(vector<string> server_names) {
         // ----------------------------------------------------
         // server_info_map
         ServerInfo si;
+        si.server_name = server_name;
         si.queue_total_wait_time = 0;
         si.server_capacity = INITAL_CAPACITY;
         server_info_map[server_name] = si;
@@ -87,7 +98,7 @@ int hasMetadata(string file_name) {
     return job_to_server_allocation_map.count(file_name) > 0 && request_start_time_map.count(file_name) > 0 && job_size_map.count(file_name) > 0;
 }
 
-void updateServerCapacities(string file_name) {
+void updateServerInfo(string file_name) {
     if (!hasMetadata(file_name)) {
         return;
     }
@@ -102,20 +113,16 @@ void updateServerCapacities(string file_name) {
     if (server_info_map[assigned_server].server_capacity == INITAL_CAPACITY) {
         // if server capacity has not been found yet
         server_info_map[assigned_server].server_capacity = capacity; // update server capacity
+        server_info_pq.push(server_info_map[assigned_server]); // got all the info we need
     } else {
         // already have server's capacity
         double process_time = job_to_process_time[file_name];
         server_info_map[assigned_server].queue_total_wait_time -= process_time;
-        cout << "DEDUCTED " << process_time << " FROM SERVER: " << assigned_server << endl;
     }
-    printAllServerInfo();
-}
 
-void updateServerInfo(string file_name) {
-    int has_metadata = request_start_time_map.count(file_name);
-    if (has_metadata) {
-        updateServerCapacities(file_name);
-    }
+    #ifdef DEBUG
+    printAllServerInfo();
+    #endif
 }
 
 // returns empty string if there's no server unqueried
@@ -143,7 +150,11 @@ string fifoAllocation(vector<string> server_names) {
     string server_name = server_names[fifo_index];
     fifo_index++;
     fifo_index = fifo_index % SERVER_COUNT;
+
+    #ifdef DEBUG
     cout << "FIFO ALLOCATED: " << server_name << endl;
+    #endif
+
     return server_name;
 }
 
@@ -156,9 +167,25 @@ string randomAllocation(vector<string> server_names) {
     std::uniform_int_distribution<int> distr(range_from, range_to);
 
     int randomIndex = distr(eng);
+
+    #ifdef DEBUG
     cout << "RANDOMLY ALLOCATED: " << server_names[randomIndex] << endl;
+    #endif
 
     return server_names[randomIndex];
+}
+
+// allocates to top capacity server, if unknown will default to random allocation
+string topKnownServerCapacityAllocation(vector<string> server_names) {
+    if (server_info_pq.size() == 0) {
+        return randomAllocation(server_names);
+    } else {
+        #ifdef DEBUG
+        cout << "ALLOCATED TO TOP SERVER: " << server_info_pq.top().server_name << endl;
+        #endif
+
+        return server_info_pq.top().server_name;
+    }
 }
 
 // this function tries to find the server with the minimum effective response time
@@ -198,8 +225,9 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
         return min_response_time_server_name;
     } else {
-        return fifoAllocation(server_names);
+        // return fifoAllocation(server_names);
         // return randomAllocation(server_names);
+        return topKnownServerCapacityAllocation(server_names);
     }
 }
 
@@ -216,7 +244,9 @@ string handleValidRequestSizeAllocation(vector<string> server_names, string file
 
 string handleInvalidRequestSizeAllocation(vector<string> server_names, string file_name) {
     // TODO
-    return fifoAllocation(server_names);
+    // return fifoAllocation(server_names);
+    // return randomAllocation(server_names);
+    return topKnownServerCapacityAllocation(server_names);
 }
 
 string allocateToServer(vector<string> server_names, string file_name, int request_size) {
