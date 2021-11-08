@@ -37,10 +37,6 @@ set<string> queried_servers; // Set<ServerName>
 
 size_t SERVER_COUNT = 0;
 
-int has_all_server_capacities = 0;
-
-size_t query_packet_ack_count = 0;
-
 size_t fifo_index = 0;
 
 double PRORATED_SERVER_CAPACITY_PERCENTAGE = 0.2;
@@ -99,10 +95,6 @@ void updateServerCapacities(string file_name) {
     if (server_info_map[assigned_server].server_capacity == INITAL_CAPACITY) {
         // if server capacity has not been found yet
         server_info_map[assigned_server].server_capacity = capacity; // update server capacity
-        query_packet_ack_count++;
-        if (query_packet_ack_count == SERVER_COUNT) {
-            has_all_server_capacities = 1;
-        }
     } else {
         // already have server's capacity
         double process_time = job_to_process_time[file_name];
@@ -174,8 +166,6 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
             }
         }
     }
-
-
 
     if (!min_response_time_server_name.empty()) {
         // update stats
