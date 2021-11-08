@@ -32,6 +32,7 @@ map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
 map<string, time_t> request_start_time_map; // Map<RequestFileName, StartTime>
 map<string, int> job_size_map; // Map<RequestFileName, requestSize>
 map<string, string> job_to_server_allocation_map; // Map<RequestFileName, ServerName>
+map<string, double> job_to_process_time; // Map<RequestFileName, ProcessTimeRequired>
 set<string> queried_servers; // Set<ServerName>
 
 size_t SERVER_COUNT = 0;
@@ -104,8 +105,7 @@ void updateServerCapacities(string file_name) {
         }
     } else {
         // already have server's capacity
-        double server_capacity = server_info_map[assigned_server].server_capacity;
-        double process_time = size / server_capacity;
+        double process_time = job_to_process_time[file_name];
         server_info_map[assigned_server].queue_total_wait_time -= process_time;
     }
     printAllServerInfo();
@@ -155,7 +155,7 @@ string fifoQueue(vector<string> server_names) {
 string getMinimumResponseTimeServer(vector<string> server_names, string file_name, int request_size) {
     string min_response_time_server_name = "";
     double min_response_time = __DBL_MAX__;
-    double process_time;
+    double process_time = 0;
     for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
         ServerInfo si = server_info_map[server_name];
@@ -175,11 +175,13 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         }
     }
 
-    // update stats
-    server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update process time
-    insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
+
 
     if (!min_response_time_server_name.empty()) {
+        // update stats
+        job_to_process_time[file_name] = process_time; // insert process time so we can subtract from queue wait time when recv
+        server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update queue wait time
+        insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
         return min_response_time_server_name;
     } else {
         return fifoQueue(server_names);
