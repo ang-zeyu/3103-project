@@ -46,7 +46,7 @@ map<string, double> job_to_process_time; // Map<FileName, ProcessTimeRequired>
 priority_queue<ServerInfo, vector<ServerInfo>, CompareServerCapacity> server_info_pq; // Max PQ, meaning top() will return server with biggest capacity
 set<string> queried_servers; // Set<ServerName>
 set<string> capacity_query_packets; // Set<FileName>
-vector<string> accumulated_jobs;
+queue<string> accumulated_jobs;
 
 size_t SERVER_COUNT = 0;
 
@@ -96,12 +96,27 @@ int hasSentCapacityQueryPacket(string server_name) {
     return queried_servers.count(server_name);
 }
 
-int hasSentAllCapacityQueryPackets() {
-    return queried_servers.size() == SERVER_COUNT;
+int hasAllServerCapacities() {
+    return server_info_pq.size() == SERVER_COUNT;
+}
+
+int hasAServerCapacity() {
+    return server_info_pq.size() > 0;
 }
 
 int hasMetadata(string file_name) {
     return job_to_server_allocation_map.count(file_name) > 0 && request_start_time_map.count(file_name) > 0 && job_size_map.count(file_name) > 0;
+}
+
+// accumulates job, doesnt send it out
+string accumulateJob(string file_name) {
+    accumulated_jobs.push(file_name);
+
+    #ifdef DEBUG
+    cout << "ACCUMULATED: " << file_name << endl;
+    #endif
+
+    return "";
 }
 
 void updateServerInfo(string file_name) {
@@ -188,15 +203,16 @@ string randomAllocation(vector<string> server_names) {
 }
 
 // allocates to top capacity server, if unknown will default to random allocation
-string topKnownServerCapacityAllocation(vector<string> server_names) {
-    if (server_info_pq.size() == 0) {
-        return randomAllocation(server_names);
-    } else {
+string topKnownServerCapacityAllocation(vector<string> server_names, string file_name) {
+    if (hasAServerCapacity()) {
         #ifdef DEBUG
         cout << "ALLOCATED TO TOP SERVER: " << server_info_pq.top().server_name << endl;
         #endif
 
         return server_info_pq.top().server_name;
+    } else {
+        // return randomAllocation(server_names);
+        return accumulateJob(file_name);
     }
 }
 
@@ -241,7 +257,8 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
 
         // return fifoAllocation(server_names);
         // return randomAllocation(server_names);
-        return topKnownServerCapacityAllocation(server_names);
+        // return topKnownServerCapacityAllocation(server_names);
+        return accumulateJob(file_name);
     }
 }
 
@@ -265,7 +282,7 @@ string handleInvalidRequestSizeAllocation(vector<string> server_names, string fi
     // TODO
     // return fifoAllocation(server_names);
     // return randomAllocation(server_names);
-    return topKnownServerCapacityAllocation(server_names);
+    return topKnownServerCapacityAllocation(server_names, file_name);
 }
 
 string allocateToServer(vector<string> server_names, string file_name, int request_size) {
@@ -369,8 +386,8 @@ string assignServerToRequest(vector<string> servernames, string request) {
     }
 
     string server_to_send = allocateToServer(servernames, file_name, request_size);
-    // string server_to_send = fifoAllocation(servernames);
 
+    // need to find a way to send accumulated jobs once we know all server capacities
     if (!server_to_send.empty()) {
         string scheduled_request = scheduleJobToServer(server_to_send, request);
         return scheduled_request;
