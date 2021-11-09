@@ -481,7 +481,6 @@ string accumulatedJobsAllocation(vector<string> server_names) {
 
     string sendToServers;
     
-    // if true, random allocation to all
     int has_reached_max_accumulated_size = accumulated_jobs.size() == MAX_NUM_ACCUMULATED_JOBS;
 
     if (has_reached_max_accumulated_size) {
