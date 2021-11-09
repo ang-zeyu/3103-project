@@ -39,6 +39,7 @@ struct CompareServerCapacity {
 
 // --------------------------------------------------------------------------------------------------------
 // global variables
+vector<string> all_server_names; // Vector<ServerNames>
 map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
 map<string, time_t> request_start_time_map; // Map<FileName, StartTime>
 map<string, int> job_size_map; // Map<FileName, requestSize>
@@ -63,12 +64,13 @@ size_t fifo_index = 0;
 // ------------------------------------------------
 // variables to adjust
 size_t MAX_NUM_ACCUMULATED_JOBS = 20;
-size_t REACHED_MAX_ACCUMULATED_TOLERANCE = 3; // if <= 0, will assume --prob=0
+size_t MAX_ACCUMULATED_TOLERANCE = 3; // if <= 0, will assume --prob=0
 // ------------------------------------------------
 
 #ifdef DEBUG
 size_t num_files_sent = 0;
 size_t num_files_received = 0;
+size_t max_size_of_accumulated_jobs_so_far = 0;
 #endif
 // --------------------------------------------------------------------------------------------------------
 
@@ -93,6 +95,13 @@ void printAllServerInfo() {
     }
 }
 
+void printServerConnections() {
+    for (size_t i = 0; i < SERVER_COUNT; i++) {
+        string server_name = all_server_names[i];
+        cout << "SERVER: " << server_name << " | NUM CON: " << server_to_job_map[server_name].size() << endl;
+    }
+}
+
 void initalizeServerInfo(vector<string> server_names) {
     SERVER_COUNT = server_names.size();
     TOP_SERVERS_LENGTH = TOP_SERVERS_PERCENTAGE_SIZE * SERVER_COUNT;
@@ -113,17 +122,25 @@ void initalizeServerInfo(vector<string> server_names) {
         set<string> jobs;
         server_to_job_map[server_name] = jobs;
         // ----------------------------------------------------
+
+        // ----------------------------------------------------
+        // server_to_job_map
+        all_server_names.push_back(server_name);
+        // ----------------------------------------------------
     }
 }
 
 int isZeroKnowledgeRun() {
-    return REACHED_MAX_ACCUMULATED_TOLERANCE <= 0;
+    return MAX_ACCUMULATED_TOLERANCE <= 0;
 }
 
 void decreaseReachedMaxAccumulatedTolerance() {
-    if (REACHED_MAX_ACCUMULATED_TOLERANCE > 0) {
-        REACHED_MAX_ACCUMULATED_TOLERANCE--;
+    if (MAX_ACCUMULATED_TOLERANCE > 0) {
+        MAX_ACCUMULATED_TOLERANCE--;
     }
+    #ifdef DEBUG
+    cout << "MAX_ACCUMULATED_TOLERANCE: " << MAX_ACCUMULATED_TOLERANCE << endl;
+    #endif
 }
 
 int hasBeenInitialized() {
@@ -169,8 +186,9 @@ string accumulateJob(string request) {
 void updateServerInfo(string file_name) {
     #ifdef DEBUG
     num_files_received++;
+    cout << "INCOMING FILE_NAME: " << file_name << endl;
     cout << "NUM FILES SENT: " << num_files_sent << " | NUM FILES RECEIVED: " << num_files_received << endl;
-    cout << "SIZE OF ACCUMULATED JOBS: " << accumulated_jobs.size() << endl;
+    cout << "SIZE OF ACCUMULATED JOBS: " << accumulated_jobs.size() << " | MAX SIZE SO FAR: " << max_size_of_accumulated_jobs_so_far << endl;
     #endif
 
     string assigned_server = job_to_server_allocation_map[file_name];
@@ -224,6 +242,7 @@ void insertMetadataBeforeSend(string server_name, string file_name, int request_
     request_start_time_map[file_name] = getNowInMilliseconds(); // set request's start time
     job_size_map[file_name] = request_size;
     job_to_server_allocation_map[file_name] = server_name;
+    server_to_job_map[server_name].insert(file_name); // update which job goes to which server
 }
 
 string fifoAllocation(vector<string> server_names) {
@@ -347,8 +366,6 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         // update stats
         job_to_process_time[file_name] = process_time; // insert process time so we can subtract from queue wait time when recv
         server_info_map[min_response_time_server_name].queue_total_wait_time += process_time; // update queue wait time
-
-        insertMetadataBeforeSend(min_response_time_server_name, file_name, request_size);
         return min_response_time_server_name;
     } else {
         // that means we don't know any server's capacity
@@ -365,7 +382,6 @@ string handleValidRequestSizeAllocation(vector<string> server_names, string file
     string server_name = getFirstUnqueriedCapacityServer(server_names, file_name);
     if (!server_name.empty()) {
         // use current request to gauge server's processing capacity
-        insertMetadataBeforeSend(server_name, file_name, request_size);
 
         #ifdef DEBUG
         cout << "QUERYING SERVER: " << server_name << endl;
@@ -463,14 +479,21 @@ int parser_jobsize(string request) {
 }
 
 // formatting: to assign server to the request
-string scheduleJobToServer(string servername, string request) {
+string scheduleJobToServer(string server_name, string request) {
+    string file_name = parser_filename(request);
+    int request_size = parser_jobsize(request);
+
+    insertMetadataBeforeSend(server_name, file_name, request_size);
 
     #ifdef DEBUG
     num_files_sent++;
-    cout << "SENT PACKET: " << request << " TO SERVER: " << servername << endl;
+    cout << "SENT PACKET: " << request << " TO SERVER: " << server_name << endl;
+    if (accumulated_jobs.size() > max_size_of_accumulated_jobs_so_far) {
+        max_size_of_accumulated_jobs_so_far = accumulated_jobs.size();
+    }
     #endif
 
-    return servername + string(",") + request + string("\n");
+    return server_name + string(",") + request + string("\n");
 }
 
 string accumulatedJobsAllocation(vector<string> server_names) {
@@ -489,10 +512,12 @@ string accumulatedJobsAllocation(vector<string> server_names) {
 
     while (accumulated_jobs.size() > 0) {
         string request = accumulated_jobs.front();
-        accumulated_jobs.pop();
+
         sendToServers += has_reached_max_accumulated_size || isZeroKnowledgeRun()
                 ? scheduleJobToServer(leastConnectionAllocation(server_names), request) // leastCon allocate if hit MAX or we guess its zero knowledge run
                 : assignServerToRequest(server_names, request);
+                
+        accumulated_jobs.pop();
     }
     return sendToServers;
 }
@@ -517,7 +542,6 @@ string assignServerToRequest(vector<string> server_names, string request) {
     string server_to_send = allocateToServer(server_names, file_name, request, request_size);
 
     if (!server_to_send.empty()) {
-        server_to_job_map[server_to_send].insert(file_name); // update which job goes to which server
         return scheduleJobToServer(server_to_send, request);;
     } else {
         // algo decided not to send request, accumulate it
