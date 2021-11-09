@@ -53,7 +53,7 @@ map<string, set<string>> server_to_job_map; // Map<ServerName,  Set<FileName>>
 
 // array of top capacity servers,
 vector<string> top_servers; 
-double TOP_SERVERS_PERCENTAGE_SIZE = 0.2;
+double TOP_SERVERS_PERCENTAGE_SIZE = 0.4;
 size_t TOP_SERVERS_LENGTH = 0; // inits with SERVER_COUNT
 
 size_t SERVER_COUNT = 0;
@@ -266,10 +266,6 @@ string leastConnectionAllocation(vector<string> server_names) {
     return server_with_least_con;
 }
 
-int hasTopKnownServersChange() {
-    return top_servers.front() == server_info_pq.top().server_name;
-}
-
 void updateTopKnownServers() {
     top_servers.clear(); // clear first
     vector<ServerInfo> buffer; // used to add back to pq and push to top_servers
@@ -294,8 +290,8 @@ void updateTopKnownServers() {
 string topKnownServersCapacityAllocation(vector<string> server_names, string request) {
     if (hasAServerCapacity()) {
         updateTopKnownServers();
-        return fifoAllocation(top_servers);
-        // return leastConnectionAllocation(top_servers);
+        // return fifoAllocation(top_servers);
+        return leastConnectionAllocation(top_servers);
     } else {
         // return randomAllocation(server_names);
         // return accumulateJob(request);
