@@ -395,17 +395,10 @@ string scheduleJobToServer(string servername, string request) {
 
 string accumulatedJobsAllocation(vector<string> server_names) {
     if (!hasAServerCapacity() || accumulated_jobs.size() == 0) {
-        return "";
+        // dont send if dk any server's capacity
+        return NO_SEND;
     }
-    // if (accumulated_jobs.size() == 0) {
-    //     return;
-    // }
 
-    // string request = accumulated_jobs.front();
-    // accumulated_jobs.pop();
-    
-    // accumulatedJobsAllocation(server_names);
-    // assignServerToRequest(server_names, request);
     string sendToServers;
     while (accumulated_jobs.size() > 0) {
         string request = accumulated_jobs.front();
@@ -416,7 +409,7 @@ string accumulatedJobsAllocation(vector<string> server_names) {
 }
 
 // main part you need to do
-string assignServerToRequest(vector<string> servernames, string request) {
+string assignServerToRequest(vector<string> server_names, string request) {
     /****************************************************
      *                       TODO                       *
      * Given the list of servers, which server you want *
@@ -429,10 +422,10 @@ string assignServerToRequest(vector<string> servernames, string request) {
 
     if (!hasBeenInitialized()) {
         // init server
-        initalizeServerInfo(servernames);
+        initalizeServerInfo(server_names);
     }
 
-    string server_to_send = allocateToServer(servernames, file_name, request, request_size);
+    string server_to_send = allocateToServer(server_names, file_name, request, request_size);
 
     if (!server_to_send.empty()) {
         #ifdef DEBUG
