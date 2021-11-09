@@ -20,7 +20,7 @@ using namespace std;
 #include <random>
 #include <queue>
 
-#define DEBUG 1
+// #define DEBUG 1
 #define INITAL_CAPACITY -1
 #define NO_SEND ""
 
@@ -63,7 +63,7 @@ size_t num_files_received = 0;
 // --------------------------------------------------------------------------------------------------------
 // function headers
 string assignServerToRequest(vector<string> servernames, string request);
-void accumulatedJobsAllocation(vector<string> server_names);
+string accumulatedJobsAllocation(vector<string> server_names);
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -393,17 +393,26 @@ string scheduleJobToServer(string servername, string request) {
     return servername + string(",") + request + string("\n");
 }
 
-// recursive function for dealing with accumulated jobs
-void accumulatedJobsAllocation(vector<string> server_names) {
-    if (accumulated_jobs.size() == 0) {
-        return;
+string accumulatedJobsAllocation(vector<string> server_names) {
+    if (!hasAServerCapacity() || accumulated_jobs.size() == 0) {
+        return "";
     }
+    // if (accumulated_jobs.size() == 0) {
+    //     return;
+    // }
 
-    string request = accumulated_jobs.front();
-    accumulated_jobs.pop();
+    // string request = accumulated_jobs.front();
+    // accumulated_jobs.pop();
     
-    accumulatedJobsAllocation(server_names);
-    assignServerToRequest(server_names, request);
+    // accumulatedJobsAllocation(server_names);
+    // assignServerToRequest(server_names, request);
+    string sendToServers;
+    while (accumulated_jobs.size() > 0) {
+        string request = accumulated_jobs.front();
+        accumulated_jobs.pop();
+        sendToServers += assignServerToRequest(server_names, request);
+    }
+    return sendToServers;
 }
 
 // main part you need to do
@@ -421,11 +430,6 @@ string assignServerToRequest(vector<string> servernames, string request) {
     if (!hasBeenInitialized()) {
         // init server
         initalizeServerInfo(servernames);
-    }
-
-    if (hasAServerCapacity()) {
-        // if found a server capacity, then assign accumulated requests
-        accumulatedJobsAllocation(servernames);
     }
 
     string server_to_send = allocateToServer(servernames, file_name, request, request_size);
@@ -458,7 +462,7 @@ void parseThenSendRequest(char* buffer, int len, const int& serverSocket, vector
             getCompletedFilename(completed_filename);
         } else {
             // if requests, add "servername" front of the request pair
-            sendToServers = sendToServers + assignServerToRequest(servernames, request);
+            sendToServers += accumulatedJobsAllocation(servernames) + assignServerToRequest(servernames, request) ;
         }
     }
     if (sendToServers.size() > 0) {
