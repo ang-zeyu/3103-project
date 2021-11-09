@@ -22,6 +22,7 @@ using namespace std;
 
 #define DEBUG 1
 #define INITAL_CAPACITY -1
+#define NO_SEND ""
 
 class ServerInfo {
     public:
@@ -62,6 +63,7 @@ size_t num_files_received = 0;
 // --------------------------------------------------------------------------------------------------------
 // function headers
 string assignServerToRequest(vector<string> servernames, string request);
+void accumulatedJobsAllocation(vector<string> server_names);
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -79,7 +81,7 @@ void printAllServerInfo() {
     }
 }
 
-void initalizeMetadata(vector<string> server_names) {
+void initalizeServerInfo(vector<string> server_names) {
     SERVER_COUNT = server_names.size();
     for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
@@ -123,7 +125,7 @@ int wasAccumulated(string request) {
     return accumulated_jobs_set.count(request);
 }
 
-// accumulates requests (not file_name)
+// accumulates requests (not file_name), does not send request
 string accumulateJob(string request) {
     accumulated_jobs.push(request);
     accumulated_jobs_set.insert(request);
@@ -132,7 +134,7 @@ string accumulateJob(string request) {
     cout << "ACCUMULATED: " << request << endl;
     #endif
 
-    return "";
+    return NO_SEND;
 }
 
 void updateServerInfo(string file_name) {
@@ -185,7 +187,7 @@ string getFirstUnqueriedCapacityServer(vector<string> server_names, string file_
         }
     }
     // unknown server
-    return "";
+    return NO_SEND;
 }
 
 void insertMetadataBeforeSend(string server_name, string file_name, int request_size) {
@@ -233,7 +235,8 @@ string topKnownServerCapacityAllocation(vector<string> server_names, string requ
         return server_info_pq.top().server_name;
     } else {
         // return randomAllocation(server_names);
-        return accumulateJob(request);
+        // return accumulateJob(request);
+        return NO_SEND;
     }
 }
 
@@ -279,7 +282,8 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
         // return fifoAllocation(server_names);
         // return randomAllocation(server_names);
         // return topKnownServerCapacityAllocation(server_names);
-        return accumulateJob(request);
+        // return accumulateJob(request);
+        return NO_SEND;
     }
 }
 
@@ -390,7 +394,7 @@ string scheduleJobToServer(string servername, string request) {
 }
 
 // recursive function for dealing with accumulated jobs
-void assignServerToAccumulatedRequests(vector<string> server_names) {
+void accumulatedJobsAllocation(vector<string> server_names) {
     if (accumulated_jobs.size() == 0) {
         return;
     }
@@ -398,7 +402,7 @@ void assignServerToAccumulatedRequests(vector<string> server_names) {
     string request = accumulated_jobs.front();
     accumulated_jobs.pop();
     
-    assignServerToAccumulatedRequests(server_names);
+    accumulatedJobsAllocation(server_names);
     assignServerToRequest(server_names, request);
 }
 
@@ -416,28 +420,26 @@ string assignServerToRequest(vector<string> servernames, string request) {
 
     if (!hasBeenInitialized()) {
         // init server
-        initalizeMetadata(servernames);
+        initalizeServerInfo(servernames);
     }
 
     if (hasAServerCapacity()) {
         // if found a server capacity, then assign accumulated requests
-        assignServerToAccumulatedRequests(servernames);
+        accumulatedJobsAllocation(servernames);
     }
 
     string server_to_send = allocateToServer(servernames, file_name, request, request_size);
 
-    // need to find a way to send accumulated jobs once we know all server capacities
     if (!server_to_send.empty()) {
-        string scheduled_request = scheduleJobToServer(server_to_send, request);
-        
         #ifdef DEBUG
         num_files_sent++;
+        cout << "SENT PACKET: " << request << " TO SERVER: " << server_to_send << endl;
         #endif
 
-        return scheduled_request;
+        return scheduleJobToServer(server_to_send, request);;
     } else {
-        // dont send, accumulate job
-        return "";
+        // algo decided not to send request, accumulate it
+        return accumulateJob(request);
     }
 }
 
