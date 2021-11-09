@@ -20,7 +20,7 @@ using namespace std;
 #include <random>
 #include <queue>
 
-// #define DEBUG 1
+#define DEBUG 1
 #define INITAL_CAPACITY -1
 #define NO_SEND ""
 
@@ -49,6 +49,12 @@ set<string> queried_servers; // Set<ServerName>
 set<string> capacity_query_packets; // Set<FileName>
 queue<string> accumulated_jobs; // Queue<Request>
 set<string> accumulated_jobs_set; // Set<Request>
+map<string, set<string>> server_to_job_map; // Map<ServerName,  Set<FileName>>
+
+// array of top capacity servers,
+vector<string> top_servers; 
+double TOP_SERVERS_PERCENTAGE_SIZE = 0.2;
+size_t TOP_SERVERS_LENGTH = 0; // inits with SERVER_COUNT
 
 size_t SERVER_COUNT = 0;
 
@@ -83,6 +89,7 @@ void printAllServerInfo() {
 
 void initalizeServerInfo(vector<string> server_names) {
     SERVER_COUNT = server_names.size();
+    TOP_SERVERS_LENGTH = TOP_SERVERS_PERCENTAGE_SIZE * SERVER_COUNT;
     for (size_t i = 0; i < server_names.size(); i++) {
         string server_name = server_names[i];
 
@@ -93,6 +100,12 @@ void initalizeServerInfo(vector<string> server_names) {
         si.queue_total_wait_time = 0;
         si.server_capacity = INITAL_CAPACITY;
         server_info_map[server_name] = si;
+        // ----------------------------------------------------
+
+        // ----------------------------------------------------
+        // server_to_job_map
+        set<string> jobs;
+        server_to_job_map[server_name] = jobs;
         // ----------------------------------------------------
     }
 }
@@ -142,11 +155,13 @@ void updateServerInfo(string file_name) {
     num_files_received++;
     #endif
 
+    string assigned_server = job_to_server_allocation_map[file_name];
+    server_to_job_map[assigned_server].erase(file_name); // update which job goes to which server
+
     if (!hasMetadata(file_name)) {
         return;
     }
 
-    string assigned_server = job_to_server_allocation_map[file_name];
     time_t duration = getNowInMilliseconds() - request_start_time_map[file_name];
 
     int size = job_size_map[file_name];
@@ -197,9 +212,13 @@ void insertMetadataBeforeSend(string server_name, string file_name, int request_
 }
 
 string fifoAllocation(vector<string> server_names) {
+    if (server_names.size() == 0) {
+        throw invalid_argument("fifoAllocation server_names provided empty!");
+    }
+
     string server_name = server_names[fifo_index];
     fifo_index++;
-    fifo_index = fifo_index % SERVER_COUNT;
+    fifo_index = fifo_index % server_names.size();
 
     #ifdef DEBUG
     cout << "FIFO ALLOCATED: " << server_name << endl;
@@ -209,6 +228,10 @@ string fifoAllocation(vector<string> server_names) {
 }
 
 string randomAllocation(vector<string> server_names) {
+    if (server_names.size() == 0) {
+        throw invalid_argument("randomAllocation server_names provided empty!");
+    }
+
     const int range_from = 0;
     const int range_to = server_names.size() - 1;
 
@@ -225,14 +248,54 @@ string randomAllocation(vector<string> server_names) {
     return server_names[randomIndex];
 }
 
-// allocates to top capacity server, if unknown will default to random allocation
-string topKnownServerCapacityAllocation(vector<string> server_names, string request) {
-    if (hasAServerCapacity()) {
-        #ifdef DEBUG
-        cout << "ALLOCATED TO TOP SERVER: " << server_info_pq.top().server_name << " | JOB: " << request << endl;
-        #endif
+string leastConnectionAllocation(vector<string> server_names) {
+    if (server_names.size() == 0) {
+        throw invalid_argument("leastConnectionAllocation server_names provided empty!");
+    }
 
-        return server_info_pq.top().server_name;
+    string server_with_least_con = "";
+    size_t min_con = SIZE_MAX;
+    for (size_t i = 0; i < server_names.size(); i++) {
+        string server_name = server_names[i];
+        size_t num_con = server_to_job_map[server_name].size();
+        if (num_con < min_con) {
+            min_con = num_con;
+            server_with_least_con = server_name;
+        }
+    }
+    return server_with_least_con;
+}
+
+int hasTopKnownServersChange() {
+    return top_servers.front() == server_info_pq.top().server_name;
+}
+
+void updateTopKnownServers() {
+    top_servers.clear(); // clear first
+    vector<ServerInfo> buffer; // used to add back to pq and push to top_servers
+    
+    size_t length = TOP_SERVERS_LENGTH < server_info_pq.size()
+        ? TOP_SERVERS_LENGTH
+        : server_info_pq.size();
+
+    for (size_t i = 0; i < length; i++) {
+        buffer.push_back(server_info_pq.top());
+        server_info_pq.pop();
+    }
+
+    // add back to pq and push to top_servers
+    for (size_t i = 0; i < length; i++) {
+        server_info_pq.push(buffer[i]);
+        top_servers.push_back(buffer[i].server_name);
+    }
+}
+
+// allocates to top capacity server, if unknown will default to random allocation
+string topKnownServersCapacityAllocation(vector<string> server_names, string request) {
+    if (hasAServerCapacity()) {
+        updateTopKnownServers();
+        return fifoAllocation(top_servers);
+        // return leastConnectionAllocation(top_servers);
     } else {
         // return randomAllocation(server_names);
         // return accumulateJob(request);
@@ -281,7 +344,7 @@ string getMinimumResponseTimeServer(vector<string> server_names, string file_nam
 
         // return fifoAllocation(server_names);
         // return randomAllocation(server_names);
-        // return topKnownServerCapacityAllocation(server_names);
+        // return topKnownServersCapacityAllocation(server_names);
         // return accumulateJob(request);
         return NO_SEND;
     }
@@ -307,7 +370,7 @@ string handleInvalidRequestSizeAllocation(vector<string> server_names, string re
     // TODO
     // return fifoAllocation(server_names);
     // return randomAllocation(server_names);
-    return topKnownServerCapacityAllocation(server_names, request);
+    return topKnownServersCapacityAllocation(server_names, request);
 }
 
 string allocateToServer(vector<string> server_names, string file_name, string request, int request_size) {
@@ -432,6 +495,8 @@ string assignServerToRequest(vector<string> server_names, string request) {
         num_files_sent++;
         cout << "SENT PACKET: " << request << " TO SERVER: " << server_to_send << endl;
         #endif
+
+        server_to_job_map[server_to_send].insert(file_name); // update which job goes to which server
 
         return scheduleJobToServer(server_to_send, request);;
     } else {
