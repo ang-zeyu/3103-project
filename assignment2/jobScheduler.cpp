@@ -60,6 +60,8 @@ size_t SERVER_COUNT = 0;
 
 size_t fifo_index = 0;
 
+size_t MAX_NUM_ACCUMULATED_JOBS = 20;
+
 #ifdef DEBUG
 size_t num_files_sent = 0;
 size_t num_files_received = 0;
@@ -184,8 +186,7 @@ void updateServerInfo(string file_name) {
     #ifdef DEBUG
     printAllServerInfo();
     cout << "NUM FILES SENT: " << num_files_sent << " | NUM FILES RECEIVED: " << num_files_received << endl;
-    cout << "IS ACCUMULATED JOB EMPTY: " << accumulated_jobs.empty() << endl;
-    cout << "FRONT ACCUMULATED JOB: " << accumulated_jobs.front() << endl;
+    cout << "SIZE OF ACCUMULATED JOBS: " << accumulated_jobs.size() << endl;
     #endif
 }
 
@@ -453,7 +454,7 @@ string scheduleJobToServer(string servername, string request) {
 }
 
 string accumulatedJobsAllocation(vector<string> server_names) {
-    if (!hasAServerCapacity() || accumulated_jobs.size() == 0) {
+    if (!hasAServerCapacity() && accumulated_jobs.size() <= MAX_NUM_ACCUMULATED_JOBS) {
         // dont send if dk any server's capacity
         return NO_SEND;
     }
