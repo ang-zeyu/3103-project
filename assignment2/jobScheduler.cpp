@@ -23,6 +23,7 @@ using namespace std;
 #define DEBUG 1
 #define INITAL_CAPACITY -1
 #define NO_SEND ""
+#define NO_REQUEST_SIZE -1
 
 class ServerInfo {
     public:
@@ -42,14 +43,13 @@ struct CompareServerCapacity {
 vector<string> all_server_names; // Vector<ServerNames>
 map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
 map<string, time_t> request_start_time_map; // Map<FileName, StartTime>
-map<string, int> job_size_map; // Map<FileName, requestSize>
+map<string, double> job_size_map; // Map<FileName, requestSize>
 map<string, string> job_to_server_allocation_map; // Map<FileName, ServerName>
 map<string, double> job_to_process_time; // Map<FileName, ProcessTimeRequired>
 priority_queue<ServerInfo, vector<ServerInfo>, CompareServerCapacity> server_info_pq; // Max PQ, meaning top() will return server with biggest capacity
 set<string> queried_servers; // Set<ServerName>
 set<string> capacity_query_packets; // Set<FileName>
 queue<string> accumulated_jobs; // Queue<Request>
-set<string> accumulated_jobs_set; // Set<Request>
 map<string, set<string>> server_to_job_map; // Map<ServerName,  Set<FileName>>
 
 // array of top capacity servers,
@@ -60,6 +60,9 @@ size_t TOP_SERVERS_LENGTH = 0; // inits with SERVER_COUNT
 size_t SERVER_COUNT = 0;
 
 size_t fifo_index = 0;
+
+size_t SUM_OF_KNOWN_JOB_SIZES = 0;
+size_t NUM_JOBS_WITH_KNOWN_SIZE = 0;
 
 // ------------------------------------------------
 // variables to adjust
@@ -78,6 +81,7 @@ size_t max_size_of_accumulated_jobs_so_far = 0;
 // function headers
 string assignServerToRequest(vector<string> servernames, string request);
 string accumulatedJobsAllocation(vector<string> server_names);
+string getMinimumResponseTimeServer(vector<string> server_names, string file_name, int request_size);
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -167,14 +171,13 @@ int hasMetadata(string file_name) {
     return job_to_server_allocation_map.count(file_name) > 0 && request_start_time_map.count(file_name) > 0 && job_size_map.count(file_name) > 0;
 }
 
-int wasAccumulated(string request) {
-    return accumulated_jobs_set.count(request);
+int hasKnownJobSizeAverage() {
+    return NUM_JOBS_WITH_KNOWN_SIZE != 0;
 }
 
 // accumulates requests (not file_name), does not send request
 string accumulateJob(string request) {
     accumulated_jobs.push(request);
-    accumulated_jobs_set.insert(request);
 
     #ifdef DEBUG
     cout << "ACCUMULATED: " << request << endl;
@@ -238,10 +241,23 @@ string getFirstUnqueriedCapacityServer(vector<string> server_names, string file_
     return NO_SEND;
 }
 
+double getAverageKnownJobSize() {
+    if (NUM_JOBS_WITH_KNOWN_SIZE == 0) {
+        return NO_REQUEST_SIZE;
+    }
+
+    return SUM_OF_KNOWN_JOB_SIZES / NUM_JOBS_WITH_KNOWN_SIZE;
+}
+
 void insertMetadataBeforeSend(string server_name, string file_name, int request_size) {
+    if (request_size != NO_REQUEST_SIZE) {
+        NUM_JOBS_WITH_KNOWN_SIZE++;
+        SUM_OF_KNOWN_JOB_SIZES += request_size;
+    }
+
     request_start_time_map[file_name] = getNowInMilliseconds(); // set request's start time
-    job_size_map[file_name] = request_size;
     job_to_server_allocation_map[file_name] = server_name;
+    job_size_map[file_name] = request_size == NO_REQUEST_SIZE ? getAverageKnownJobSize() : request_size;
     server_to_job_map[server_name].insert(file_name); // update which job goes to which server
 }
 
@@ -320,8 +336,8 @@ void updateTopKnownServers() {
     }
 }
 
-// allocates to top capacity server, if unknown will default to random allocation
-string topKnownServersCapacityAllocation(vector<string> server_names, string request) {
+// allocates to top capacity server
+string topKnownServersCapacityAllocation(vector<string> server_names) {
     if (hasAServerCapacity()) {
         updateTopKnownServers();
         // return fifoAllocation(top_servers);
@@ -339,7 +355,7 @@ string topKnownServersCapacityAllocation(vector<string> server_names, string req
 // 2) how much time the server takes to process "this" job
 // However if we cannot find a valid server, in the event where we
 // do not know of any server's capacity, it'll default to FIFO
-string getMinimumResponseTimeServer(vector<string> server_names, string file_name, string request, int request_size) {
+string getMinimumResponseTimeServer(vector<string> server_names, string file_name, int request_size) {
     string min_response_time_server_name = "";
     double min_response_time = __DBL_MAX__;
     double process_time = 0;
@@ -389,22 +405,23 @@ string handleValidRequestSizeAllocation(vector<string> server_names, string file
 
         return server_name;
     } else {
-        return getMinimumResponseTimeServer(server_names, file_name, request, request_size);
+        return getMinimumResponseTimeServer(server_names, file_name, request_size);
     }
 }
 
-string handleInvalidRequestSizeAllocation(vector<string> server_names, string request) {
-    // TODO
-    // return fifoAllocation(server_names);
-    // return randomAllocation(server_names);
-    return topKnownServersCapacityAllocation(server_names, request);
+string handleInvalidRequestSizeAllocation(vector<string> server_names, string file_name) {
+    if (hasKnownJobSizeAverage()) {
+        return getMinimumResponseTimeServer(server_names, file_name, getAverageKnownJobSize());
+    } else {
+        return topKnownServersCapacityAllocation(server_names);
+    }
 }
 
 string allocateToServer(vector<string> server_names, string file_name, string request, int request_size) {
     if (isValidRequestSize(request_size)) {
         return handleValidRequestSizeAllocation(server_names, file_name, request, request_size);
     } else {
-        return handleInvalidRequestSizeAllocation(server_names, request);
+        return handleInvalidRequestSizeAllocation(server_names, file_name);
     }
 }
 
