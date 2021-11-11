@@ -40,3 +40,4 @@ if __name__ == "__main__":
     plt.savefig('histogram.png')
 
     print("\n\n*** Average completion time : {0:2.4f}".format(np.mean([v[1] for v in list_tsdiff])))
+    print("*** 95th percentile time : {0:2.4f}".format(np.percentile([v[1] for v in list_tsdiff], 95)))
