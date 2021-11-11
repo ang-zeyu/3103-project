@@ -557,6 +557,7 @@ string assignServerToRequest(vector<string> server_names, string request) {
     }
 
     string server_to_send = allocateToServer(server_names, file_name, request, request_size);
+    // string server_to_send = fifoAllocation(server_names);
 
     if (!server_to_send.empty()) {
         return scheduleJobToServer(server_to_send, request);;
