@@ -64,8 +64,14 @@ class JobMetadata {
 
         double getServerCapacity() {
             double duration_in_seconds = this->getTimeElapsed() / 1000;
-            double capacity = this->size / duration_in_seconds;
-            return capacity;
+            if (duration_in_seconds < 0.5) {
+                // too fast
+                return INITAL_CAPACITY;
+            } else {
+                double capacity = this->size / duration_in_seconds;
+                return capacity;
+            }
+
         }
     
     private:
@@ -175,7 +181,13 @@ void updateServerInfo(string file_name) {
     ServerInfo &si = server_info_map.at(assigned_server);
     if (job_metadata.is_capacity_query_packet) {
         // We can drive statistics for server's capacity if it is a is_capacity_query_packet
-        si.server_capacity = job_metadata.getServerCapacity(); // update server capacity
+        double server_capacity = job_metadata.getServerCapacity();
+        if (server_capacity == INITAL_CAPACITY) {
+            // came back too fast, might be inaccurate
+            si.is_queried = false;
+        } else {
+            si.server_capacity = server_capacity; // update server capacity
+        }
         // server_info_pq.push(server_info_map.at(assigned_server)); // got all the info we need
     } else if (job_metadata.process_time != UNINITIALISED_PROCESS_TIME) {
         // already have server's capacity
