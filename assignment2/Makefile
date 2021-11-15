@@ -5,3 +5,6 @@ build:
 
 run:
 	./jobScheduler.out ${PORT}
+
+plot:
+	python3 ./plot.py
