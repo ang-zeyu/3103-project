@@ -30,6 +30,7 @@ class ServerInfo {
         const string server_name;
         double server_capacity = INITAL_CAPACITY;
         double queue_total_wait_time = 0;
+        time_t latest_job_start_time;
         bool is_queried = false;
         set<string> jobs;
 
@@ -248,7 +249,7 @@ void insertMetadataBeforeSend(string server_name, string file_name) {
     ) {
         job_metadata.process_time = job_metadata.size / si.server_capacity;
         si.queue_total_wait_time += job_metadata.process_time; // update queue wait time
-
+        si.latest_job_start_time = job_metadata.start_time; // update latest job start time
         #ifdef DEBUG
         cout << "INCREASED server " << server_name << " queue_total_wait_time " << si.queue_total_wait_time << " by " << job_metadata.process_time << endl;
         #endif
@@ -271,10 +272,11 @@ string getMinimumResponseTimeServer(string file_name) {
             && si.jobs.size() == 0                  // criteria 2: no jobs allocated (since sequential model)
             ;
         if (is_valid_server) {
+            time_t elapsed_time_in_seconds = (getNowInMilliseconds() - si.latest_job_start_time) / 1000;
             double queue_total_wait_time = si.queue_total_wait_time;
             double process_time_needed = job.size / si.server_capacity;
 
-            double response_time = queue_total_wait_time + process_time_needed;
+            double response_time = queue_total_wait_time + process_time_needed - elapsed_time_in_seconds;
             if (response_time < min_response_time) {
                 min_response_time_server_name = server_and_info.first;
                 min_response_time = response_time;
