@@ -24,13 +24,14 @@ using namespace std;
 #define INITAL_CAPACITY -1
 #define NO_SEND ""
 #define NO_REQUEST_SIZE -1
+#define INITAL_START_TIME -1
 
 class ServerInfo {
     public:
         const string server_name;
         double server_capacity = INITAL_CAPACITY;
         double queue_total_wait_time = 0;
-        time_t latest_job_start_time;
+        time_t latest_job_start_time = INITAL_START_TIME;
         bool is_queried = false;
         set<string> jobs;
 
@@ -109,6 +110,7 @@ string assignServerToRequest(vector<string> servernames, string request);
 string accumulatedJobsAllocation(vector<string> server_names);
 string getMinimumResponseTimeServer(vector<string> server_names, string file_name, int request_size);
 string scheduleJobToServer(string server_name, string file_name);
+double calculateElapsedTime(time_t start_time);
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -118,6 +120,7 @@ void printAllServerInfo() {
     for (auto const& p : server_info_map) {
         cout << "Server name: " << p.first
             << " | Wait time: " << p.second.queue_total_wait_time
+            << " | Elapsed Time: " << calculateElapsedTime(p.second.latest_job_start_time)
             << " | Estimated Capacity: " << p.second.server_capacity
             << " | Num jobs active: " << p.second.jobs.size()
             << endl;
@@ -147,6 +150,14 @@ int hasKnownJobSizeAverage() {
 
 // ------------------------------------------------------------------------------------------------------------------------------
 // Main stuff
+
+double calculateElapsedTime(time_t start_time) {
+    if (start_time == INITAL_START_TIME) {
+        return 0;
+    }
+    
+    return ((double) getNowInMilliseconds() - (double)start_time) / 1000;
+}
 
 // accumulates requests (not file_name), does not send request
 string accumulateJob(string file_name) {
@@ -181,6 +192,7 @@ void updateServerInfo(string file_name) {
     }
 
     ServerInfo &si = server_info_map.at(assigned_server);
+    si.latest_job_start_time = INITAL_START_TIME;
     if (job_metadata.is_capacity_query_packet) {
         // We can drive statistics for server's capacity if it is a is_capacity_query_packet
         double server_capacity = job_metadata.getServerCapacity();
@@ -272,7 +284,7 @@ string getMinimumResponseTimeServer(string file_name) {
             && si.jobs.size() == 0                  // criteria 2: no jobs allocated (since sequential model)
             ;
         if (is_valid_server) {
-            time_t elapsed_time_in_seconds = (getNowInMilliseconds() - si.latest_job_start_time) / 1000;
+            time_t elapsed_time_in_seconds = calculateElapsedTime(si.latest_job_start_time);
             double queue_total_wait_time = si.queue_total_wait_time;
             double process_time_needed = job.size / si.server_capacity;
 
