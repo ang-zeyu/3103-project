@@ -24,7 +24,6 @@ using namespace std;
 #define INITAL_CAPACITY -1
 #define NO_SEND ""
 #define NO_REQUEST_SIZE -1
-#define INITAL_START_TIME -1
 
 class ServerInfo {
     public:
@@ -35,6 +34,19 @@ class ServerInfo {
         deque<string> jobs;
 
         ServerInfo(const string &server_name) : server_name(server_name) {}
+
+        double getTimeToAvailability() const {
+            timeval time_now;
+            gettimeofday(&time_now, nullptr);
+            timeval result;
+            timersub(&this->latest_job_end_time, &time_now, &result);
+            double res = result.tv_sec + (((double)result.tv_usec) / 1000000.0);
+            if (res < 0) {
+                res = 0;
+            }
+
+            return res;
+        }
 };
 
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -98,7 +110,6 @@ size_t max_size_of_accumulated_jobs_so_far = 0;
 string assignServerToRequest(vector<string> servernames, string request);
 string accumulatedJobsAllocation(vector<string> server_names);
 string scheduleJobToServer(string server_name, string file_name, bool push_front= false);
-double calculateElapsedTime(timeval end_time);
 // --------------------------------------------------------------------------------------------------------
 
 // ------------------------------------------------------------------------------------------------------------------------------
@@ -107,7 +118,7 @@ double calculateElapsedTime(timeval end_time);
 void printAllServerInfo() {
     for (auto const& p : server_info_map) {
         cout << "Server name: " << p.first
-            << " | Elapsed Time: " << calculateElapsedTime(p.second.latest_job_end_time)
+            << " | Time Till Available: " << p.second.getTimeToAvailability()
             << " | Estimated Capacity: " << p.second.server_capacity
             << " | Num jobs active: " << p.second.jobs.size()
             << endl;
@@ -134,19 +145,6 @@ int hasBeenInitialized() {
 
 // ------------------------------------------------------------------------------------------------------------------------------
 // Main stuff
-
-double calculateElapsedTime(timeval end_time) {
-    timeval time_now;
-    gettimeofday(&time_now, nullptr);
-    timeval result;
-    timersub(&end_time, &time_now, &result);
-    double res = result.tv_sec + (((double)result.tv_usec) / 1000000);
-    if (res < 0) {
-        res = 0;
-    }
-
-    return res;
-}
 
 // accumulates requests (not file_name), does not send request
 string accumulateJob(string file_name) {
@@ -179,10 +177,11 @@ void updateServerInfo(string file_name) {
     }
     #endif
 
-    si.jobs.pop_front(); // erase job from server list
+    si.jobs.pop_front();
 
+    // --------------------------------------------------------------------------------------
+    // Our estimated time may not == the actual time it took, adjust for it
     if (job_metadata.size != NO_REQUEST_SIZE && si.server_capacity != INITAL_CAPACITY) {
-        // Our estimated time may not == the actual time it took
 
         double est_process_time_of_job = job_metadata.size / si.server_capacity;
         double actual_process_time = (getNowInMilliseconds() - job_metadata.job_start_time) / 1000.0;
@@ -207,10 +206,15 @@ void updateServerInfo(string file_name) {
 
         si.latest_job_end_time = new_latest_job_end_time; // update latest job start time
         #ifdef DEBUG
-        cout << "est_process_time_of_job " << est_process_time_of_job << " actual_process_time " << actual_process_time << " start " << job_metadata.job_start_time << endl;
-        cout << "ADJUSTED server " << assigned_server << " actual_minus_est " << actual_minus_est << " longer? " << it_actually_took_longer << endl;
+        cout << "Process time: estimated " << est_process_time_of_job
+            << " | actual " << actual_process_time
+            << " | start " << job_metadata.job_start_time
+            << " | actual_minus_est " << actual_minus_est
+            << " | longer? " << it_actually_took_longer
+            << " || ADJUSTED server " << assigned_server << endl;
         #endif
     }
+    // --------------------------------------------------------------------------------------
 
     if (job_metadata.size == NO_REQUEST_SIZE) {
         // unknown size, can't drive any statistics
@@ -277,7 +281,7 @@ string getMinimumResponseTimeServer(string file_name) {
             continue;
         }
 
-        double wait_time = calculateElapsedTime(si.latest_job_end_time);
+        double wait_time = si.getTimeToAvailability();
         double process_time_of_currjob = job.size / si.server_capacity;
 
         double response_time = wait_time + process_time_of_currjob;
@@ -360,13 +364,12 @@ string handleInvalidRequestSizeAllocation(string file_name) {
 
             string min_response_time_server_name = NO_SEND;
             double min_response_time = __DBL_MAX__;
-            highest_capacity = INITAL_CAPACITY - 1;
             for (auto &server_and_info : server_info_map) {
                 if (server_and_info.second.server_capacity == INITAL_CAPACITY) {
                     continue;
                 }
 
-                double wait_time = calculateElapsedTime(server_and_info.second.latest_job_end_time);
+                double wait_time = server_and_info.second.getTimeToAvailability();
                 double process_time_of_currjob = averageJobSize / server_and_info.second.server_capacity;
 
                 double response_time = wait_time + process_time_of_currjob;
@@ -374,13 +377,11 @@ string handleInvalidRequestSizeAllocation(string file_name) {
                 if (response_time < min_response_time) {
                     min_response_time_server_name = server_and_info.first;
                     min_response_time = response_time;
-                } else if (response_time == min_response_time && server_and_info.second.server_capacity > highest_capacity) {
-                    min_response_time_server_name = server_and_info.first;
                 }
             }
 
             if (min_response_time_server_name == NO_SEND) {
-                accumulated_jobs.push(file_name);
+                accumulateJob(file_name);
                 return NO_SEND;
             }
 
@@ -508,7 +509,7 @@ string scheduleJobToServer(string server_name, string file_name, bool push_front
         job_metadata.size != NO_REQUEST_SIZE
         && si.server_capacity != INITAL_CAPACITY
     ) {
-        double wait_time = calculateElapsedTime(si.latest_job_end_time);
+        double wait_time = si.getTimeToAvailability();
         if (wait_time == 0) {
             gettimeofday(&si.latest_job_end_time, nullptr);
         }
@@ -545,17 +546,6 @@ string accumulatedJobsAllocation(string file_name) {
 
     if (si.jobs.size()) { // server still has some jobs
         JobMetadata &job = job_metadatas.at(si.jobs.front());
-        /* if (
-            accumulated_jobs.size()
-            && job_metadatas.at(accumulated_jobs.front()).start_time < job.start_time
-        ) {
-            string accumulated_job = accumulated_jobs.front();
-            accumulated_jobs.pop();
-
-            sendToServers += scheduleJobToServer(server, accumulated_jobs.front(), true);
-        } else {
-            sendToServers += formatRequest(&job);
-        } */
         sendToServers += formatRequest(&job);
     } else if (accumulated_jobs.size()) {
         sendToServers += scheduleJobToServer(server, accumulated_jobs.front(), true);
