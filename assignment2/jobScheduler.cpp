@@ -129,10 +129,6 @@ int hasBeenInitialized() {
     return !server_info_map.empty();
 }
 
-int hasKnownJobSizeAverage() {
-    return NUM_JOBS_WITH_KNOWN_SIZE != 0;
-}
-
 // ------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -276,7 +272,8 @@ string getMinimumResponseTimeServer(string file_name) {
             continue;
         }
 
-        if (!min_response_time_server_is_busy && si.jobs.size()) {
+        bool is_server_busy = si.jobs.size();
+        if (!min_response_time_server_is_busy && is_server_busy) {
             continue;
         }
 
@@ -284,7 +281,7 @@ string getMinimumResponseTimeServer(string file_name) {
         double process_time_of_currjob = job.size / si.server_capacity;
 
         double response_time = wait_time + process_time_of_currjob;
-        if (response_time < min_response_time || (min_response_time_server_is_busy && si.jobs.size() == 0)) {
+        if (response_time < min_response_time || (min_response_time_server_is_busy && !is_server_busy)) {
             min_response_time_server_name = server_and_info.first;
             min_response_time = response_time;
             min_response_time_server_is_busy = si.jobs.size();
