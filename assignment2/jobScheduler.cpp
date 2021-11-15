@@ -118,6 +118,7 @@ void printAllServerInfo() {
         cout << "Server name: " << p.first
             << " | Wait time: " << p.second.queue_total_wait_time
             << " | Estimated Capacity: " << p.second.server_capacity
+            << " | Num jobs active: " << p.second.jobs.size()
             << endl;
     }
 }
@@ -265,7 +266,10 @@ string getMinimumResponseTimeServer(string file_name) {
     double min_response_time = __DBL_MAX__;
     for (auto &server_and_info : server_info_map) {
         ServerInfo &si = server_and_info.second;
-        int is_valid_server = si.server_capacity != INITAL_CAPACITY;
+        int is_valid_server =
+            si.server_capacity != INITAL_CAPACITY   // criteria 1: has capacity
+            && si.jobs.size() == 0                  // criteria 2: no jobs allocated (since sequential model)
+            ;
         if (is_valid_server) {
             double queue_total_wait_time = si.queue_total_wait_time;
             double process_time_needed = job.size / si.server_capacity;
