@@ -81,13 +81,7 @@ class JobMetadata {
 // global variables
 map<string, ServerInfo> server_info_map; // Map<ServerName, ServerInfo>
 map<string, JobMetadata> job_metadatas; // Map<file_name, JobMetadata>
-queue<string> accumulated_jobs;
-
-// array of top capacity servers,
-vector<string> top_servers; 
-double TOP_SERVERS_PERCENTAGE_SIZE = 0.4;
-
-size_t fifo_index = 0;
+queue<string> accumulated_jobs; // jobs which we could not decide where to place. store globally first.
 
 size_t SUM_OF_KNOWN_JOB_SIZES = 0;
 size_t NUM_JOBS_WITH_KNOWN_SIZE = 0;
@@ -333,7 +327,10 @@ string handleInvalidRequestSizeAllocation(string file_name) {
     // Choose any **available** server with the highest capacity
     string highest_capacity_server_name = NO_SEND;
     int highest_capacity = INITAL_CAPACITY - 1;
+    bool encountered_known_capacity = false;
     for (auto &server_and_info : server_info_map) {
+        encountered_known_capacity = encountered_known_capacity || (server_and_info.second.server_capacity != INITAL_CAPACITY);
+
         if (!server_and_info.second.jobs.empty()) {
             continue; // server is busy
         }
@@ -345,46 +342,49 @@ string handleInvalidRequestSizeAllocation(string file_name) {
     }
 
     if (highest_capacity_server_name == NO_SEND) {
-        // No servers available
-        #ifdef DEBUG
-        cout << "@handleInvalidRequestSizeAllocation: no servers available for " << file_name << endl;
-        #endif
+        // no idle server
 
-        // Relax the check, 
-        for (auto &server_and_info : server_info_map) {
-            if (server_and_info.second.server_capacity > highest_capacity) {
-                highest_capacity_server_name = server_and_info.first;
-                highest_capacity = server_and_info.second.server_capacity;
-            }
-        }
-
-        if (highest_capacity == INITAL_CAPACITY) { // no known server capacity
+        if (!encountered_known_capacity) {
+            // no known server capacity (i.e. likely 0% case, possibly 50% case if known size packets just haven't come yet)
+            #ifdef DEBUG
+            cout << "@handleInvalidRequestSizeAllocation: accumulating for " << file_name << endl;
+            #endif
             accumulated_jobs.push(file_name);
             return NO_SEND;
-        } else { // some known server capacity (i.e. 50% case)
-            // Find the one with the minimum wait time
+        } else {
+            // some known server capacity (i.e. 50% case)
+            #ifdef DEBUG
+            cout << "@handleInvalidRequestSizeAllocation: using average job size for " << file_name << endl;
+            #endif
 
+            // Find the one with the minimum wait time
             double averageJobSize = getAverageKnownJobSize();
             averageJobSize = averageJobSize == NO_REQUEST_SIZE ? 0 : averageJobSize;
 
             string min_response_time_server_name = NO_SEND;
             double min_response_time = __DBL_MAX__;
-            highest_capacity = INITAL_CAPACITY;
+            highest_capacity = INITAL_CAPACITY - 1;
             for (auto &server_and_info : server_info_map) {
-                int is_valid_server = server_and_info.second.server_capacity != INITAL_CAPACITY;
-                if (is_valid_server) {
-                    double wait_time = calculateElapsedTime(server_and_info.second.latest_job_end_time);
-                    double process_time_of_currjob = averageJobSize / server_and_info.second.server_capacity;
-
-                    double response_time = wait_time + process_time_of_currjob;
-                    
-                    if (response_time < min_response_time) {
-                        min_response_time_server_name = server_and_info.first;
-                        min_response_time = response_time;
-                    } else if (response_time == min_response_time && server_and_info.second.server_capacity > highest_capacity) {
-                        min_response_time_server_name = server_and_info.first;
-                    }
+                if (server_and_info.second.server_capacity == INITAL_CAPACITY) {
+                    continue;
                 }
+
+                double wait_time = calculateElapsedTime(server_and_info.second.latest_job_end_time);
+                double process_time_of_currjob = averageJobSize / server_and_info.second.server_capacity;
+
+                double response_time = wait_time + process_time_of_currjob;
+                
+                if (response_time < min_response_time) {
+                    min_response_time_server_name = server_and_info.first;
+                    min_response_time = response_time;
+                } else if (response_time == min_response_time && server_and_info.second.server_capacity > highest_capacity) {
+                    min_response_time_server_name = server_and_info.first;
+                }
+            }
+
+            if (min_response_time_server_name == NO_SEND) {
+                accumulated_jobs.push(file_name);
+                return NO_SEND;
             }
 
             return scheduleJobToServer(min_response_time_server_name, file_name);
@@ -564,23 +564,6 @@ string accumulatedJobsAllocation(string file_name) {
         sendToServers += scheduleJobToServer(server, accumulated_jobs.front(), true);
         accumulated_jobs.pop();
     }
-
-    /* while (accumulated_jobs.size() > 0) {
-        string file_name = accumulated_jobs.front();
-        JobMetadata &job = job_metadatas.at(file_name);
-
-        string assignedServer = allocateToServer(file_name, job.size);
-
-        if (assignedServer == NO_SEND) {
-            break; // no servers available for now
-        }
-        
-        #ifdef DEBUG
-        cout << "ASSIGNED ACCUMULATED JOB \"" << job.request << "\" TO SERVER: " << assignedServer << endl;
-        #endif
-        accumulated_jobs.pop();
-        sendToServers += assignedServer;
-    } */
 
     return sendToServers;
 }
