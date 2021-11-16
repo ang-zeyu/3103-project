@@ -1,3 +1,9 @@
+/*
+ * Group Members:
+ * Ang Ze Yu (A0187094U)
+ * Choo Xing Yu (A0202132E)
+ */
+
 using namespace std;
 
 #include <arpa/inet.h>
@@ -20,15 +26,17 @@ using namespace std;
 #include <random>
 #include <queue>
 
-#define DEBUG 1
-#define INITAL_CAPACITY -1
+// @grader feel free to uncomment. prints lots of fun stuff =)
+// #define DEBUG 1
+
+#define UNKNOWN_CAPACITY -1
 #define NO_SEND ""
 #define NO_REQUEST_SIZE -1
 
 class ServerInfo {
     public:
         const string server_name;
-        double server_capacity = INITAL_CAPACITY;
+        double server_capacity = UNKNOWN_CAPACITY;
         timeval latest_job_end_time;
         bool is_queried = false;
         deque<string> jobs;
@@ -75,7 +83,7 @@ class JobMetadata {
             double duration_in_seconds = this->getTimeElapsed() / 1000;
             if (duration_in_seconds < 0.5) {
                 // too fast
-                return INITAL_CAPACITY;
+                return UNKNOWN_CAPACITY;
             } else {
                 double capacity = this->size / duration_in_seconds;
                 return capacity;
@@ -181,7 +189,7 @@ void updateServerInfo(string file_name) {
 
     // --------------------------------------------------------------------------------------
     // Our estimated time may not == the actual time it took, adjust for it
-    if (job_metadata.size != NO_REQUEST_SIZE && si.server_capacity != INITAL_CAPACITY) {
+    if (job_metadata.size != NO_REQUEST_SIZE && si.server_capacity != UNKNOWN_CAPACITY) {
 
         double est_process_time_of_job = job_metadata.size / si.server_capacity;
         double actual_process_time = (getNowInMilliseconds() - job_metadata.job_start_time) / 1000.0;
@@ -221,7 +229,7 @@ void updateServerInfo(string file_name) {
     } else if (job_metadata.is_capacity_query_packet) {
         // We can drive statistics for server's capacity if it is a is_capacity_query_packet
         double server_capacity = job_metadata.getServerCapacity();
-        if (server_capacity == INITAL_CAPACITY) {
+        if (server_capacity == UNKNOWN_CAPACITY) {
             // came back too fast, might be inaccurate
             si.is_queried = false;
         } else {
@@ -272,7 +280,7 @@ string getMinimumResponseTimeServer(string file_name) {
 
     for (auto &server_and_info : server_info_map) {
         ServerInfo &si = server_and_info.second;
-        if (si.server_capacity == INITAL_CAPACITY) {
+        if (si.server_capacity == UNKNOWN_CAPACITY) {
             continue;
         }
 
@@ -327,10 +335,10 @@ string handleInvalidRequestSizeAllocation(string file_name) {
 
     // Choose any **available** server with the highest capacity
     string highest_capacity_server_name = NO_SEND;
-    int highest_capacity = INITAL_CAPACITY - 1;
+    int highest_capacity = UNKNOWN_CAPACITY - 1;
     bool encountered_known_capacity = false;
     for (auto &server_and_info : server_info_map) {
-        encountered_known_capacity = encountered_known_capacity || (server_and_info.second.server_capacity != INITAL_CAPACITY);
+        encountered_known_capacity = encountered_known_capacity || (server_and_info.second.server_capacity != UNKNOWN_CAPACITY);
 
         if (!server_and_info.second.jobs.empty()) {
             continue; // server is busy
@@ -365,7 +373,7 @@ string handleInvalidRequestSizeAllocation(string file_name) {
             string min_response_time_server_name = NO_SEND;
             double min_response_time = __DBL_MAX__;
             for (auto &server_and_info : server_info_map) {
-                if (server_and_info.second.server_capacity == INITAL_CAPACITY) {
+                if (server_and_info.second.server_capacity == UNKNOWN_CAPACITY) {
                     continue;
                 }
 
@@ -507,7 +515,7 @@ string scheduleJobToServer(string server_name, string file_name, bool push_front
 
     if (
         job_metadata.size != NO_REQUEST_SIZE
-        && si.server_capacity != INITAL_CAPACITY
+        && si.server_capacity != UNKNOWN_CAPACITY
     ) {
         double wait_time = si.getTimeToAvailability();
         if (wait_time == 0) {
